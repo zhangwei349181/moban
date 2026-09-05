@@ -1,0 +1,49 @@
+---
+import type { MenuItem } from '../../../lib/menu';
+import {
+  activeMenuChildren,
+  getMenuItemLabel,
+  getMenuItemUrl,
+  menuPanelId,
+} from '../../../lib/headerMenu';
+import NavArrow from './NavArrow.astro';
+import DropdownMenuLinkL2 from './DropdownMenuLinkL2.astro';
+
+interface Props {
+  item: MenuItem;
+  locale: string;
+}
+
+const { item, locale } = Astro.props;
+const label = getMenuItemLabel(item, locale);
+const href = getMenuItemUrl(item);
+const panelId = menuPanelId(item);
+const children = activeMenuChildren(item);
+const target = item.target && item.target !== '_self' ? item.target : undefined;
+---
+
+<li class="nav-item relative cursor-pointer py-2.5" data-menu={panelId}>
+  <a
+    href={href}
+    target={target}
+    rel={target ? 'noopener noreferrer' : undefined}
+    class="hover:border-stroke-2 text-tagline-1 text-secondary/60 hover:text-secondary flex items-center gap-1 rounded-full border border-transparent px-4 py-2 font-normal transition-all duration-200"
+  >
+    <span>{label}</span>
+    <NavArrow />
+  </a>
+  <div>
+    <div
+      class="dropdown-menu-bridge pointer-events-none absolute top-full left-1/2 z-40 h-3 w-full min-w-[280px] -translate-x-1/2 bg-transparent opacity-0"
+    >
+    </div>
+    <ul
+      id={panelId}
+      class="dropdown-menu nav-dropdown-panel border-stroke-1 pointer-events-none absolute top-full left-1/2 z-50 mt-2 w-[280px] -translate-x-1/2 rounded-[20px] border bg-white p-3 opacity-0"
+    >
+      {children.map((child) => (
+        <DropdownMenuLinkL2 item={child} locale={locale} />
+      ))}
+    </ul>
+  </div>
+</li>

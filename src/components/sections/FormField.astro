@@ -1,0 +1,175 @@
+---
+import type { FormFieldView } from '../../lib/formSection';
+
+interface Props {
+  field: FormFieldView;
+  variant?: 'default' | 'footer';
+}
+
+const { field, variant = 'default' } = Astro.props;
+
+const inputId = `form-field-${field.id}`;
+const isFooter = variant === 'footer';
+const baseInputClass = isFooter
+  ? 'border-stroke-7/30 bg-background-6 placeholder:text-tagline-3 text-accent text-tagline-3 block h-13 w-full rounded-md border px-3 py-[11px] font-normal placeholder:font-normal placeholder:text-accent/60 focus:border-primary-500/50 focus:outline-none'
+  : 'text-tagline-2 w-full rounded-md border border-stroke-1 bg-background-1 px-4.5 py-3 text-secondary placeholder:text-secondary/60 outline-none transition-colors focus:border-primary-500/60 dark:border-stroke-7 dark:bg-background-7 dark:text-accent dark:placeholder:text-accent/60';
+const labelClass = isFooter
+  ? 'font-inter-tight text-tagline-3 text-accent block font-normal'
+  : 'text-tagline-2 block font-normal text-secondary dark:text-accent';
+const descClass = isFooter
+  ? 'font-inter-tight text-tagline-3 text-accent/60 -mt-1'
+  : 'text-tagline-3 -mt-1 text-secondary/60 dark:text-accent/60';
+---
+
+<div
+  class="dynamic-form-field space-y-2"
+  data-field-key={field.fieldKey}
+  data-field-type={field.fieldType}
+>
+  {
+    field.fieldType !== 'boolean' && (
+      <label for={inputId} class={labelClass}>
+        {field.label}
+        {field.required && <span class="text-red-500" aria-hidden="true"> *</span>}
+      </label>
+    )
+  }
+  {
+    field.description && field.fieldType !== 'boolean' && (
+      <p class={descClass}>{field.description}</p>
+    )
+  }
+
+  {
+    field.fieldType === 'text' && (
+      <input
+        type="text"
+        id={inputId}
+        name={field.fieldKey}
+        class={baseInputClass}
+        placeholder={field.placeholder}
+        required={field.required}
+      />
+    )
+  }
+
+  {
+    (field.fieldType === 'textarea' || field.fieldType === 'rich_text') && (
+      <textarea
+        id={inputId}
+        name={field.fieldKey}
+        class={`${baseInputClass} min-h-[120px] resize-y`}
+        rows={field.rows}
+        placeholder={field.placeholder}
+        required={field.required}
+      />
+    )
+  }
+
+  {
+    field.fieldType === 'number' && (
+      <input
+        type="number"
+        id={inputId}
+        name={field.fieldKey}
+        class={baseInputClass}
+        placeholder={field.placeholder}
+        required={field.required}
+      />
+    )
+  }
+
+  {
+    field.fieldType === 'date' && (
+      <input type="date" id={inputId} name={field.fieldKey} class={baseInputClass} required={field.required} />
+    )
+  }
+
+  {
+    field.fieldType === 'datetime' && (
+      <input
+        type="datetime-local"
+        id={inputId}
+        name={field.fieldKey}
+        class={baseInputClass}
+        required={field.required}
+      />
+    )
+  }
+
+  {
+    field.fieldType === 'boolean' && (
+      <label class="flex cursor-pointer items-start gap-3">
+        <input
+          type="checkbox"
+          id={inputId}
+          name={field.fieldKey}
+          class="border-stroke-1 text-primary-500 focus:ring-primary-500/30 mt-1 size-4 shrink-0 rounded dark:border-stroke-7"
+          required={field.required}
+        />
+        <span class="space-y-1">
+          <span class={labelClass}>
+            {field.label}
+            {field.required && <span class="text-red-500" aria-hidden="true"> *</span>}
+          </span>
+          {field.description && (
+            <span class="text-tagline-3 block text-secondary/60 dark:text-accent/60">
+              {field.description}
+            </span>
+          )}
+        </span>
+      </label>
+    )
+  }
+
+  {
+    field.fieldType === 'select' && (
+      <select id={inputId} name={field.fieldKey} class={baseInputClass} required={field.required}>
+        {field.placeholder && <option value="">{field.placeholder}</option>}
+        {field.options.map((opt) => (
+          <option value={opt}>{opt}</option>
+        ))}
+      </select>
+    )
+  }
+
+  {
+    field.fieldType === 'multiselect' && (
+      <select
+        id={inputId}
+        name={field.fieldKey}
+        class={baseInputClass}
+        multiple
+        required={field.required}
+        size={Math.min(Math.max(field.options.length, 3), 6)}
+      >
+        {field.options.map((opt) => (
+          <option value={opt}>{opt}</option>
+        ))}
+      </select>
+    )
+  }
+
+  {
+    (field.fieldType === 'file' || field.fieldType === 'image') && (
+      <>
+        <input
+          type="file"
+          id={inputId}
+          name={field.fieldKey}
+          class={`${baseInputClass} file:text-tagline-4 file:bg-background-3 file:text-secondary/70 file:mr-3 file:rounded-lg file:border-0 file:px-3 file:py-2`}
+          accept={field.accept}
+          multiple
+          required={field.required}
+          data-upload-field="true"
+        />
+        <div
+          id={`${inputId}-progress`}
+          class="text-tagline-4 text-secondary/50 hidden"
+          aria-live="polite"
+        />
+        <div id={`${inputId}-preview`} class="flex flex-wrap gap-2" />
+      </>
+    )
+  }
+</div>

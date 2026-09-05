@@ -1,0 +1,80 @@
+---
+/**
+ * Post 区块：标题/CTA 来自 CMS metadata，文章列表来自后台 API。
+ * 组件记录 type=post 时渲染本组件（旧租户仍可用 code=post / post01–99）。
+ * 展示模板壳来自 metadata 多语言 html_url（或内联 html）；没有可加载模板时显示提示。
+ */
+import {
+  resolvePostSectionMeta,
+  resolvePostSectionGroups,
+  loadPostSectionTemplate,
+  resolvePostClientInit,
+} from './resolvers/post';
+import { missingTemplateNoticeHtml, resolveHeader } from './resolvers/_shared';
+import { loadPostSectionGroups } from '../../lib/postSection';
+import { getTenantId } from '../../lib/i18n';
+import { getTranslationByLocale } from '../../lib/translations';
+import { renderPostSectionHtml } from '../../lib/postTemplate';
+
+interface Props {
+  metadata: Record<string, unknown>;
+  locale: string;
+}
+
+const { metadata, locale } = Astro.props;
+const tenantId = getTenantId(Astro);
+const d = resolvePostSectionMeta(metadata, locale);
+const groups = resolvePostSectionGroups(metadata, locale);
+const clientInit = resolvePostClientInit(metadata, locale);
+const cssUrl = clientInit.cssUrl;
+
+let html = '';
+try {
+  const templateShell = await loadPostSectionTemplate(metadata, locale, Astro.url);
+  if (!templateShell) {
+    html = missingTemplateNoticeHtml(locale);
+  } else {
+    const loadedGroups = await loadPostSectionGroups(locale, tenantId, groups);
+    const header = resolveHeader(metadata, locale, { title: d.title, subtitle: '' });
+
+    html = renderPostSectionHtml({
+      locale,
+      meta: d,
+      subtitle: header.subtitle,
+      groups: loadedGroups,
+      templateShell,
+      labels: {
+        emptyMessage: getTranslationByLocale(locale, 'no_articles_found'),
+        sectionBadge: getTranslationByLocale(locale, 'new_blog_section_title'),
+        readMoreLabel: getTranslationByLocale(locale, 'read_more'),
+      },
+    });
+  }
+} catch (error) {
+  console.error('[post.astro] render failed:', error);
+}
+---
+
+<div
+  class="post-section-slot post-section-slot--bare"
+  data-post-section
+  data-post-slot
+  data-use-platform-ui={clientInit.usePlatformUi ? '1' : '0'}
+  data-has-custom-init={clientInit.initScriptUrl || clientInit.initScriptInline ? '1' : '0'}
+  set:html={html}
+/>
+{cssUrl && <link rel="stylesheet" href={cssUrl} />}
+{clientInit.initScriptUrl && (
+  <script src={clientInit.initScriptUrl} data-post-custom-init="url" />
+)}
+{clientInit.initScriptInline && (
+  <script is:inline data-post-custom-init="inline">
+    {clientInit.initScriptInline}
+  </script>
+)}
+
+<script>
+  import { ensurePostBoot } from '../../lib/postBoot.client';
+
+  ensurePostBoot();
+</script>

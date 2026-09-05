@@ -1,0 +1,3562 @@
+---
+---
+
+<script>
+  import { clientProduct } from '../../lib/product.js';
+  import {
+    clientPricing,
+    matchesCrowdfundingUserRestrictions,
+    matchesDiscountUserRestrictions,
+    matchesGroupBuyingUserRestrictions,
+  } from '../../lib/pricing.js';
+  import type { DiscountViewerContext } from '../../lib/pricing.js';
+  import { clientShipping } from '../../lib/shipping.js';
+  import { clientVariant } from '../../lib/variant.js';
+  import { postAddCartItem, syncLocalCartFromServer } from '../../lib/cart-api.js';
+  import { isAuthenticated, getCurrentMembershipId, getUser, getCurrentMembership } from '../../lib/auth.js';
+  import { clientTranslations } from '../../lib/translations.js';
+  import { isInWishlist, toggleWishlist } from '../../lib/wishlist.js';
+  import {
+    adjustPlainProductPricesForGlobalTier,
+    categoryIdsFromProductLike,
+    isUnregisteredPriceUiHidden,
+  } from '../../lib/globalDiscountPrice.js';
+  import { createShopGroupBuying } from '../../lib/shopProductGroupBuying.js';
+  import { createShopCrowdfunding } from '../../lib/shopProductCrowdfunding.js';
+  import type {
+    ArticleMainData,
+    ArticleContentData,
+    ArticleVariantsData,
+    DiscountRulesData,
+    ShippingTemplateData,
+    TaxTemplateData,
+    RegionsData,
+    CategoryData,
+    TagData,
+    UserProfileData,
+    Variant,
+    Attribute,
+    AttributeValue,
+    Discount,
+    Address,
+    GroupBuyingData,
+    GroupBuyingActivity,
+    CrowdfundingData,
+    CrowdfundingActivity,
+    CrowdfundingReward,
+  } from '../../lib/product.js';
+  import type { SelectedAttributes } from '../../lib/variant.js';
+  import type { AppliedDiscountDetail } from '../../lib/pricing.js';
+
+  (function() {
+    // 全局产品数据存储（用于变体匹配和价格更新）
+    let globalProductData: {
+      articleMain: ArticleMainData;
+      articleContent: ArticleContentData;
+      variants: ArticleVariantsData;
+      discountRules: DiscountRulesData;
+      shippingTemplates: ShippingTemplateData[];
+      taxTemplates: TaxTemplateData[];
+      regionsData: RegionsData | null;
+      userProfile: UserProfileData | null;
+      groupBuyingData: GroupBuyingData | null;
+      crowdfundingData: CrowdfundingData | null;
+      config: ReturnType<typeof getGlobalConfig>;
+    } | null = null;
+
+    // 当前选中的变体
+    let currentVariant: Variant | null = null;
+
+    // 当前选中的团购活动
+    let selectedGroupBuying: GroupBuyingActivity | null = null;
+
+    // 当前选中的众筹活动
+    let selectedCrowdfunding: CrowdfundingActivity | null = null;
+
+    // 当前匹配的众筹回报档位
+    let matchedCrowdfundingReward: CrowdfundingReward | null = null;
+
+    /** 当前商品分类 ID，用于全局折扣中的分类乘数 */
+    let productCategoryIdsForDiscount: string[] = [];
+
+    // 当前选中的地址
+    let selectedAddress: Address | null = null;
+
+    // 当前选中的运费模板索引（默认第一个）
+    let selectedShippingTemplateIndex: number = 0;
+
+    // 当前选中的税费模板索引（默认第一个）
+    let selectedTaxTemplateIndex: number = 0;
+
+    // 当前折扣后的单价（用于运费和税费计算）
+    let currentDiscountedPrice: number = 0;
+
+    // 当前价格信息（用于添加到购物车）
+    let currentPriceInfo: {
+      originalPrice: number;
+      discountedPrice: number;
+      discountAmount: number;
+      discountResult?: any; // applyDiscountWithDetails 的返回值
+    } | null = null;
+
+    // 当前运费和税费信息（用于添加到购物车）
+    let currentShippingTaxInfo: {
+      shippingFee: number;
+      taxFee: number;
+      shippingTemplateId?: string;
+      taxTemplateId?: string;
+    } | null = null;
+
+    // 运费税费计算的全局错误状态
+    type ShippingTaxErrorType = 
+      | 'NO_ADDRESS'           // 请选择收货地址以计算运费和税费
+      | 'NOT_LOGGED_IN'        // 请登录以计算运费和税费
+      | 'NO_SHIPPING_TEMPLATE' // 该产品未配置运费模板
+      | 'NO_TAX_TEMPLATE'      // 该产品未配置税费模板
+      | 'CANNOT_SHIP_TO_REGION' // 产品无法销售到该区域
+      | 'NO_MATCHING_RULE'      // 当前模板无匹配规则
+      | 'NONE';                 // 无错误
+
+    interface ShippingTaxErrorState {
+      type: ShippingTaxErrorType;
+      message: string;
+      timestamp: number;
+    }
+
+    let shippingTaxErrorState: ShippingTaxErrorState = {
+      type: 'NONE',
+      message: '',
+      timestamp: 0,
+    };
+
+    // 设置运费税费错误状态
+    function setShippingTaxError(type: ShippingTaxErrorType, message: string) {
+      const previousState = { ...shippingTaxErrorState };
+      shippingTaxErrorState = {
+        type,
+        message,
+        timestamp: Date.now(),
+      };
+
+      const timestamp = new Date().toISOString();
+      if (previousState.type !== type) {
+        console.log(`[运费税费错误状态变化] ${timestamp}`);
+        console.log(`  从: ${previousState.type} (${previousState.message})`);
+        console.log(`  到: ${type} (${message})`);
+        console.log(`  状态对象:`, shippingTaxErrorState);
+      } else {
+        console.log(`[运费税费错误状态更新] ${timestamp}`);
+        console.log(`  类型: ${type} (${message})`);
+        console.log(`  状态对象:`, shippingTaxErrorState);
+      }
+    }
+
+    // 清除运费税费错误状态
+    function clearShippingTaxError() {
+      const previousState = { ...shippingTaxErrorState };
+      if (previousState.type !== 'NONE') {
+        shippingTaxErrorState = {
+          type: 'NONE',
+          message: '',
+          timestamp: Date.now(),
+        };
+
+        const timestamp = new Date().toISOString();
+        console.log(`[运费税费错误状态清除] ${timestamp}`);
+        console.log(`  从: ${previousState.type} (${previousState.message})`);
+        console.log(`  到: NONE (无错误)`);
+        console.log(`  状态对象:`, shippingTaxErrorState);
+      }
+    }
+
+    // 获取运费税费错误状态（供外部调用，如提交购物车时检查）
+    function getShippingTaxErrorState(): ShippingTaxErrorState {
+      return { ...shippingTaxErrorState };
+    }
+
+    // 检查是否有运费税费错误（供外部调用）
+    function hasShippingTaxError(): boolean {
+      return shippingTaxErrorState.type !== 'NONE';
+    }
+
+    // 将错误状态检查函数暴露到全局作用域，方便提交购物车时调用
+    (window as any).getShippingTaxErrorState = getShippingTaxErrorState;
+    (window as any).hasShippingTaxError = hasShippingTaxError;
+
+    // 获取全局配置
+    function getGlobalConfig() {
+      const win = window as any;
+      return {
+        tenantId: win.__ASTRO_TENANT_ID__ || '',
+        locale: win.__ASTRO_LOCALE__ || 'zh-CN',
+        currentCurrency: win.__ASTRO_CURRENT_CURRENCY__ || null,
+        defaultCurrency: win.__ASTRO_DEFAULT_CURRENCY__ || null,
+        exchangeRate: win.__ASTRO_EXCHANGE_RATE__ || 1,
+        apiBaseUrl: win.__ASTRO_API_BASE_URL_01__ || '',
+      };
+    }
+
+    // 获取产品ID
+    function getArticleId(): string | null {
+      const section = document.querySelector('[data-productsingle-section][data-article-id]');
+      if (!section) return null;
+      return section.getAttribute('data-article-id');
+    }
+
+    /** 折扣用户维度：membership.level（无则 null）；membership_restriction 使用 User.id */
+    function getDiscountViewerContext(): DiscountViewerContext {
+      const user = getUser();
+      const mem = getCurrentMembership();
+      const levelRaw = mem?.level;
+      const level =
+        levelRaw !== undefined &&
+        levelRaw !== null &&
+        String(levelRaw).trim() !== ''
+          ? String(levelRaw).trim()
+          : null;
+      return {
+        userId: user?.id ?? null,
+        level,
+      };
+    }
+
+    // 获取用户数据（如果已登录）
+    async function getUserProfileIfLoggedIn(
+      config: ReturnType<typeof getGlobalConfig>
+    ): Promise<UserProfileData | null> {
+      if (!isAuthenticated()) {
+        return null;
+      }
+
+      const membershipId = getCurrentMembershipId();
+      if (!membershipId) {
+        return null;
+      }
+
+      try {
+        return await clientProduct.fetchUserProfile(membershipId, config.tenantId);
+      } catch (error) {
+        console.error('Failed to fetch user profile:', error);
+        return null;
+      }
+    }
+
+    interface ProductSingleSsrPayload {
+      articleMain: ArticleMainData;
+      articleContent: ArticleContentData;
+      variants: ArticleVariantsData;
+      discountRules: DiscountRulesData;
+      categories: CategoryData[];
+      tags: TagData[];
+      shippingTemplates: ShippingTemplateData[];
+      taxTemplates: TaxTemplateData[];
+      regionsData: RegionsData | null;
+      groupBuyingData: GroupBuyingData | null;
+      crowdfundingData: CrowdfundingData | null;
+    }
+
+    function readSsrPayload(): ProductSingleSsrPayload | null {
+      const el = document.getElementById('product-single-ssr-payload');
+      if (!el?.textContent?.trim()) return null;
+      try {
+        return JSON.parse(el.textContent) as ProductSingleSsrPayload;
+      } catch {
+        return null;
+      }
+    }
+
+    // 加载产品数据主函数
+    async function loadProductData(articleId: string) {
+      const config = getGlobalConfig();
+
+      const ssrPayload = readSsrPayload();
+      if (ssrPayload) {
+        try {
+          showLoadingState();
+          const userProfile = await getUserProfileIfLoggedIn(config);
+          renderProductPage({
+            ...ssrPayload,
+            userProfile,
+            config,
+          });
+        } catch (error) {
+          console.error('=== SSR 产品数据渲染失败 ===', error);
+          showErrorState(error instanceof Error ? error.message : '加载产品数据失败');
+        } finally {
+          hideLoadingState();
+        }
+        return;
+      }
+      
+      try {
+        // 显示加载状态
+        console.log('=== 开始加载产品数据 ===');
+        showLoadingState();
+
+        // 1. 获取用户数据（如果已登录）
+        console.log('1. 获取用户数据...');
+        const userProfile = await getUserProfileIfLoggedIn(config);
+        console.log('用户数据获取完成');
+
+        // 2. 并行加载核心数据
+        console.log('2. 并行加载核心数据...');
+        const [articleMain, articleContent, variantsRes, discountRules] = await Promise.all([
+          clientProduct.fetchArticleMain(articleId, config.tenantId),
+          clientProduct.fetchArticleContent(articleId, config.locale, config.tenantId),
+          clientProduct.fetchArticleVariants(articleId, config.tenantId),
+          clientProduct.fetchDiscountRules(articleId, config.tenantId),
+        ]);
+        console.log('核心数据加载完成');
+
+        // 变体接口可能返回 data.attributes / data.variants 为 null（新商品或未配置变体）
+        const variants: ArticleVariantsData = {
+          success: variantsRes?.success ?? true,
+          data: {
+            attributes: Array.isArray(variantsRes?.data?.attributes) ? variantsRes.data.attributes : [],
+            variants: Array.isArray(variantsRes?.data?.variants) ? variantsRes.data.variants : [],
+          },
+        };
+
+        // 3. 加载关联数据（主数据里各 id 数组可能为 null，需兜底避免 .map 报错）
+        const loadPromises: Promise<any>[] = [];
+
+        const categoryIds = articleMain.data.categories ?? [];
+        const tagIds = articleMain.data.tags ?? [];
+        const shippingTemplateIds = articleMain.data.shipping_template_ids ?? [];
+        const taxTemplateIds = articleMain.data.tax_template_ids ?? [];
+
+        // 加载分类数据
+        const categoryPromises = categoryIds.map(categoryId =>
+          clientProduct.fetchCategory(categoryId, config.tenantId).catch(err => {
+            console.error(`Failed to fetch category ${categoryId}:`, err);
+            return null;
+          })
+        );
+        loadPromises.push(...categoryPromises);
+
+        // 加载标签数据
+        const tagPromises = tagIds.map(tagId =>
+          clientProduct.fetchTag(tagId, config.tenantId).catch(err => {
+            console.error(`Failed to fetch tag ${tagId}:`, err);
+            return null;
+          })
+        );
+        loadPromises.push(...tagPromises);
+
+        // 加载运费模板数据
+        const shippingTemplatePromises = shippingTemplateIds.map(templateId =>
+          clientProduct.fetchShippingTemplate(templateId, config.tenantId).catch(err => {
+            console.error(`Failed to fetch shipping template ${templateId}:`, err);
+            return null;
+          })
+        );
+        loadPromises.push(...shippingTemplatePromises);
+
+        // 加载税费模板数据
+        const taxTemplatePromises = taxTemplateIds.map(templateId =>
+          clientProduct.fetchTaxTemplate(templateId, config.tenantId).catch(err => {
+            console.error(`Failed to fetch tax template ${templateId}:`, err);
+            return null;
+          })
+        );
+        loadPromises.push(...taxTemplatePromises);
+
+        // 加载区域数据（只需要加载一次）
+        const regionsPromise = clientProduct.fetchRegions(config.tenantId).catch(err => {
+          console.error('Failed to fetch regions:', err);
+          return null;
+        });
+        loadPromises.push(regionsPromise);
+
+        // 等待所有关联数据加载完成
+        const results = await Promise.all(loadPromises);
+        
+        // 处理结果（切片长度与上方 categoryIds / tagIds / shippingTemplateIds / taxTemplateIds 一致）
+        const categories = results.slice(0, categoryIds.length).filter(Boolean) as CategoryData[];
+        const tags = results.slice(
+          categoryIds.length,
+          categoryIds.length + tagIds.length
+        ).filter(Boolean) as TagData[];
+        const shippingTemplates = results.slice(
+          categoryIds.length + tagIds.length,
+          categoryIds.length + tagIds.length + shippingTemplateIds.length
+        ).filter(Boolean) as ShippingTemplateData[];
+        const taxTemplates = results.slice(
+          categoryIds.length + tagIds.length + shippingTemplateIds.length,
+          categoryIds.length + tagIds.length + shippingTemplateIds.length + taxTemplateIds.length
+        ).filter(Boolean) as TaxTemplateData[];
+        const regionsData = results[results.length - 1] as RegionsData | null;
+
+        // 3.5. 如果是团购产品，加载团购数据
+        let groupBuyingData: GroupBuyingData | null = null;
+        if (articleMain.data.article.article_type === 'group_product') {
+          try {
+            console.log('=== 开始加载团购数据 ===');
+            console.log('articleId:', articleId, 'tenantId:', config.tenantId);
+            groupBuyingData = await clientProduct.fetchGroupBuying(articleId, config.tenantId);
+            console.log('团购数据加载成功:', groupBuyingData);
+          } catch (error) {
+            console.error('Failed to fetch group buying data:', error);
+            groupBuyingData = null;
+          }
+        } else {
+          console.log('产品类型不是 group_product，跳过团购数据加载，当前类型:', articleMain.data.article.article_type);
+        }
+
+        // 3.6. 如果是众筹产品，加载众筹数据
+        let crowdfundingData: CrowdfundingData | null = null;
+        if (articleMain.data.article.article_type === 'crowdfunding_product') {
+          try {
+            console.log('=== 开始加载众筹数据 ===');
+            console.log('articleId:', articleId, 'tenantId:', config.tenantId);
+            crowdfundingData = await clientProduct.fetchCrowdfunding(articleId, config.tenantId);
+            console.log('众筹数据加载成功:', crowdfundingData);
+          } catch (error) {
+            console.error('Failed to fetch crowdfunding data:', error);
+            crowdfundingData = null;
+          }
+        } else {
+          console.log('产品类型不是 crowdfunding_product，跳过众筹数据加载，当前类型:', articleMain.data.article.article_type);
+        }
+
+        // 4. 处理数据并渲染页面
+        console.log('4. 开始渲染产品页面...');
+        renderProductPage({
+          articleMain,
+          articleContent,
+          variants,
+          discountRules,
+          categories,
+          tags,
+          shippingTemplates,
+          taxTemplates,
+          regionsData,
+          userProfile,
+          groupBuyingData,
+          crowdfundingData,
+          config,
+        });
+        console.log('产品页面渲染完成');
+
+        // 隐藏加载状态
+        console.log('隐藏加载动画...');
+        hideLoadingState();
+
+      } catch (error) {
+        console.error('=== 加载产品数据失败 ===');
+        console.error('错误详情:', error);
+        showErrorState(error instanceof Error ? error.message : '加载产品数据失败');
+      } finally {
+        // 确保无论如何都会隐藏加载状态
+        hideLoadingState();
+      }
+    }
+
+    // 显示加载状态
+    function showLoadingState() {
+      const loadingOverlay = document.getElementById('product-loading-overlay');
+      const loadingText = document.getElementById('loading-text');
+      if (loadingOverlay) {
+        // 重置样式，确保显示
+        loadingOverlay.style.opacity = '1';
+        loadingOverlay.style.transition = '';
+        // 使用 !important 强制覆盖 Bootstrap 的 d-flex 类
+        loadingOverlay.style.setProperty('display', 'flex', 'important');
+        console.log('显示加载动画');
+      } else {
+        console.warn('加载动画元素未找到');
+      }
+      // 更新加载文本（国际化）
+      if (loadingText) {
+        const config = getGlobalConfig();
+        loadingText.textContent = clientTranslations.get('loading_product_data');
+      }
+      console.log('Loading product data...');
+    }
+
+    // 隐藏加载状态
+    function hideLoadingState() {
+      const loadingOverlay = document.getElementById('product-loading-overlay');
+      if (loadingOverlay) {
+        // 检查当前计算后的样式，而不是内联样式
+        const computedStyle = window.getComputedStyle(loadingOverlay);
+        if (computedStyle.display === 'none') {
+          console.log('加载动画已经隐藏，跳过');
+          return;
+        }
+        
+        // 使用 !important 强制隐藏（因为 d-flex 类可能覆盖内联样式）
+        loadingOverlay.style.setProperty('display', 'none', 'important');
+        loadingOverlay.style.opacity = '1'; // 重置透明度，以便下次显示
+        loadingOverlay.style.transition = ''; // 清除过渡效果
+        
+        console.log('加载动画已隐藏');
+      } else {
+        console.warn('加载动画元素未找到');
+      }
+    }
+
+    // 显示错误状态
+    function showErrorState(message: string) {
+      // TODO: 实现错误提示
+      console.error('Error:', message);
+      alert(message);
+    }
+
+    // 渲染产品页面
+    function renderProductPage(data: {
+      articleMain: ArticleMainData;
+      articleContent: ArticleContentData;
+      variants: ArticleVariantsData;
+      discountRules: DiscountRulesData;
+      categories: CategoryData[];
+      tags: TagData[];
+      shippingTemplates: ShippingTemplateData[];
+      taxTemplates: TaxTemplateData[];
+      regionsData: RegionsData | null;
+      userProfile: UserProfileData | null;
+      groupBuyingData: GroupBuyingData | null;
+      crowdfundingData: CrowdfundingData | null;
+      config: ReturnType<typeof getGlobalConfig>;
+    }) {
+      const {
+        articleMain,
+        articleContent,
+        variants,
+        discountRules,
+        categories,
+        tags,
+        shippingTemplates,
+        taxTemplates,
+        regionsData,
+        userProfile,
+        groupBuyingData,
+        crowdfundingData,
+        config,
+      } = data;
+
+      productCategoryIdsForDiscount = categoryIdsFromProductLike(articleMain);
+      if (typeof window !== 'undefined') {
+        (window as any).__ASTRO_PRODUCT_CATEGORY_IDS__ = productCategoryIdsForDiscount;
+      }
+
+      // 1. 渲染产品标题和标签
+      renderProductTitle(articleContent, tags, config.locale);
+      
+      // 1.5. 初始化价格和库存标签（国际化）
+      initPriceAndStockLabels(config.locale);
+      
+      // 2. 渲染产品简介
+      renderProductSummary(articleContent);
+      
+      // 2.5. 渲染团购活动列表（如果有团购数据）
+      console.log('=== 检查是否渲染团购列表 ===');
+      console.log('groupBuyingData:', groupBuyingData);
+      if (groupBuyingData && groupBuyingData.data && groupBuyingData.data.group_buying) {
+        console.log('有团购数据，调用 renderGroupBuyingList');
+        groupBuyingRuntime.renderGroupBuyingList(groupBuyingData, config.locale);
+      } else {
+        console.log('没有团购数据，跳过渲染');
+      }
+      
+      // 2.6. 渲染众筹活动列表（如果有众筹数据）
+      console.log('=== 检查是否渲染众筹列表 ===');
+      console.log('crowdfundingData:', crowdfundingData);
+      if (crowdfundingData && crowdfundingData.data && crowdfundingData.data.crowdfunding) {
+        console.log('有众筹数据，调用 renderCrowdfundingList');
+        crowdfundingRuntime.renderCrowdfundingList(crowdfundingData, config.locale);
+      } else {
+        console.log('没有众筹数据，跳过渲染');
+      }
+      
+      // 3. 渲染产品图片
+      renderProductImages(articleMain);
+      
+      // 4. 渲染产品价格
+      renderProductPrice(articleMain, variants, discountRules, config);
+      
+      // 5. 渲染产品库存
+      renderProductStock(articleMain, variants);
+      
+      // 5.5. 渲染折扣规则列表
+      renderDiscountRules(discountRules, config.locale);
+      
+      // 6. 渲染产品属性（颜色、尺寸等）
+      if (variants.data.attributes && variants.data.attributes.length > 0) {
+        renderProductAttributes(variants, config.locale);
+      } else {
+        // 如果没有属性，隐藏属性容器
+        hideAttributeContainers();
+      }
+      
+      // 7. 渲染产品描述
+      renderProductDescription(articleContent);
+      
+      // 8. 渲染分类（标签已在标题处渲染）
+      // renderCategoriesAndTags(categories, tags, config.locale);
+
+      // 保存全局产品数据
+      globalProductData = {
+        articleMain,
+        articleContent,
+        variants,
+        discountRules,
+        shippingTemplates,
+        taxTemplates,
+        regionsData,
+        userProfile,
+        groupBuyingData,
+        crowdfundingData,
+        config,
+      };
+
+      // 初始化UI交互
+      initProductInteractions({
+        articleMain,
+        variants,
+        discountRules,
+        shippingTemplates,
+        taxTemplates,
+        regionsData,
+        userProfile,
+        groupBuyingData,
+        crowdfundingData,
+        config,
+      });
+
+      // 初始化默认变体（使用第一个选中的属性值）
+      // 使用 setTimeout 确保属性渲染完成后再初始化
+      setTimeout(() => {
+        initializeDefaultVariant(variants, config);
+      }, 0);
+    }
+
+    // 获取标签的显示名称（支持多语言）
+    function getTagDisplayName(tag: TagData, locale: string): string {
+      if (!tag || !tag.data || !tag.data.tag) {
+        return '';
+      }
+
+      const tagData = tag.data.tag;
+
+      // 根据文档，translations 在 data.translations 下，而不是 tag.translations
+      // 如果指定了语言，查找翻译
+      if (locale && tag.data.translations && tag.data.translations.length > 0) {
+        const translation = tag.data.translations.find(t => t.language_code === locale);
+        if (translation && (translation as any).name) {
+          return (translation as any).name;
+        }
+      }
+
+      // 返回默认名称（主语言名称）
+      return tagData.name || '';
+    }
+
+    // 初始化价格和库存标签（国际化）
+    function initPriceAndStockLabels(locale: string) {
+      const originalPriceLabel = document.querySelector('.original-price-label');
+      const discountedPriceLabel = document.querySelector('.discounted-price-label');
+      const stockLabel = document.querySelector('.stock-label');
+
+      if (originalPriceLabel) {
+        originalPriceLabel.textContent = clientTranslations.get('original_price');
+      }
+      if (discountedPriceLabel) {
+        discountedPriceLabel.textContent = clientTranslations.get('discounted_price');
+      }
+      if (stockLabel) {
+        stockLabel.textContent = clientTranslations.get('stock');
+      }
+    }
+
+    // 渲染产品标题和标签
+    function renderProductTitle(
+      articleContent: ArticleContentData,
+      tags: TagData[],
+      locale: string
+    ) {
+      const titleElement =
+        document.querySelector('.shop-prd-title .title') || document.querySelector('.right-box-contain .name');
+      if (titleElement) {
+        titleElement.textContent = articleContent.data.title;
+      }
+
+      const displayTags = tags.map(tag => getTagDisplayName(tag, locale)).filter(Boolean);
+      const fkOffers = document.querySelectorAll('.right-box-contain .offer-top');
+      if (fkOffers.length) {
+        fkOffers.forEach((el, i) => {
+          const h = el as HTMLElement;
+          if (displayTags[i]) {
+            h.textContent = displayTags[i];
+            h.style.display = '';
+          } else {
+            h.textContent = '';
+            h.style.display = 'none';
+          }
+        });
+        const subtitleElement = document.querySelector('.shop-prd-title .subtitle');
+        if (subtitleElement) (subtitleElement as HTMLElement).style.display = 'none';
+        return;
+      }
+
+      const subtitleElement = document.querySelector('.shop-prd-title .subtitle');
+      if (subtitleElement) {
+        const shortTags = displayTags.slice(0, 2);
+        if (shortTags.length > 0) {
+          subtitleElement.textContent = shortTags.join(' / ');
+          (subtitleElement as HTMLElement).style.display = '';
+        } else {
+          subtitleElement.textContent = '';
+          (subtitleElement as HTMLElement).style.display = 'none';
+        }
+      }
+    }
+
+    // 渲染产品简介
+    function renderProductSummary(articleContent: ArticleContentData) {
+      const fkSummary = document.querySelector('.product-contain p');
+      if (fkSummary) {
+        const wrap = fkSummary.closest('.product-contain') as HTMLElement | null;
+        if (articleContent.data.summary) {
+          fkSummary.textContent = articleContent.data.summary;
+          if (wrap) wrap.style.display = '';
+        } else if (wrap) {
+          wrap.style.display = 'none';
+        }
+        return;
+      }
+      const summaryElement = document.querySelector('.pre-order p.mb-0.d-flex');
+      if (summaryElement && articleContent.data.summary) {
+        // 保留图标，只更新文本内容
+        const iconElement = summaryElement.querySelector('.icon');
+        if (iconElement) {
+          summaryElement.innerHTML = '';
+          summaryElement.appendChild(iconElement);
+          const textNode = document.createTextNode(articleContent.data.summary);
+          summaryElement.appendChild(textNode);
+        } else {
+          summaryElement.textContent = articleContent.data.summary;
+        }
+      } else if (summaryElement && !articleContent.data.summary) {
+        // 如果没有简介，隐藏该区域
+        const preOrderContainer = summaryElement.closest('.pre-order');
+        if (preOrderContainer) {
+          (preOrderContainer as HTMLElement).style.display = 'none';
+        }
+      }
+    }
+
+
+    // 获取众筹活动的显示名称（支持多语言）
+    function renderProductImages(articleMain: ArticleMainData) {
+      const images = articleMain.data.article.metadata.template_fields["Showcase Gallery"] || [];
+      
+      if (images.length === 0) {
+        // 使用默认占位图
+        images.push('/images/placeholder.jpg');
+      }
+
+      const galleryRoot = document.querySelector('.product-single-gallery-main');
+      if (galleryRoot) {
+        const buildSlide = (src: string, idx: number) =>
+          `<div class="swiper-slide${idx === 0 ? ' is-active swiper-slide-active' : ''}"><img src="${src}" ${idx === 0 ? 'id="img-1"' : ''} alt="" loading="${idx === 0 ? 'eager' : 'lazy'}" /></div>`;
+        const buildThumb = (src: string, idx: number) =>
+          `<div class="swiper-slide${idx === 0 ? ' is-active swiper-slide-thumb-active' : ''}"><img src="${src}" alt="" loading="lazy" /></div>`;
+
+        const mainWrapper = galleryRoot.querySelector('.swiper-wrapper');
+        const thumbsEl = document.querySelector('.product-single-gallery-thumbs');
+        const thumbsWrapper = thumbsEl?.querySelector('.swiper-wrapper');
+
+        if (mainWrapper) {
+          mainWrapper.innerHTML = images.map((img, i) => buildSlide(img, i)).join('');
+        }
+        if (thumbsWrapper && images.length > 1) {
+          thumbsWrapper.innerHTML = images.map((img, i) => buildThumb(img, i)).join('');
+        }
+
+        if (typeof (window as any).initProductSingleGallery === 'function') {
+          (window as any).initProductSingleGallery();
+        } else {
+          document.dispatchEvent(new CustomEvent('productsingle:gallery-updated'));
+        }
+        return;
+      }
+
+      // Fastkart 模板：.product-main + .left-slider-image（slick 与 custom_slick.js 一致）
+      const fkMain = document.querySelector('.product-main');
+      const fkThumb = document.querySelector('.left-slider-image');
+      if (fkMain && fkThumb) {
+        const buildSlide = (src: string, idx: number) =>
+          `<div><div class="slider-image"><img src="${src}" data-zoom-image="${src}" class="img-fluid image_zoom_cls-${idx} blur-up lazyload" alt=""></div></div>`;
+        const buildThumb = (src: string) =>
+          `<div><div class="sidebar-image"><img src="${src}" class="img-fluid blur-up lazyload" alt=""></div></div>`;
+        fkMain.innerHTML = images.map((img, i) => buildSlide(img, i)).join('');
+        fkThumb.innerHTML = images.map((img) => buildThumb(img)).join('');
+        const w = window as any;
+        if (w.jQuery && w.jQuery.fn && w.jQuery.fn.slick) {
+          const $ = w.jQuery;
+          const $pm = $('.product-main');
+          const $th = $('.left-slider-image');
+          if ($pm.hasClass('slick-initialized')) $pm.slick('unslick');
+          if ($th.hasClass('slick-initialized')) $th.slick('unslick');
+          $pm.slick({
+            slidesToShow: 1,
+            slidesToScroll: 1,
+            arrows: false,
+            fade: true,
+            asNavFor: '.left-slider-image',
+          });
+          $th.slick({
+            slidesToShow: 4,
+            slidesToScroll: 1,
+            asNavFor: '.product-main',
+            dots: false,
+            focusOnSelect: true,
+            responsive: [
+              { breakpoint: 1400, settings: { vertical: false } },
+              { breakpoint: 992, settings: { vertical: false } },
+              { breakpoint: 768, settings: { vertical: false } },
+              { breakpoint: 430, settings: { slidesToShow: 3, vertical: false } },
+            ],
+          });
+        }
+        return;
+      }
+
+      // SVG图标（用于图片预览）
+      const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <path d="M6.8885 8.61157C6.7605 8.61157 6.6325 8.66057 6.535 8.75807L2.5 12.7936V10.4651C2.5 10.1886 2.2765 9.96507 2 9.96507C1.7235 9.96507 1.5 10.1886 1.5 10.4651V14.0001C1.5 14.2766 1.7235 14.5001 2 14.5001H5.535C5.8115 14.5001 6.035 14.2766 6.035 14.0001C6.035 13.7236 5.8115 13.5001 5.535 13.5001H3.2075L7.242 9.46507C7.4375 9.26957 7.4375 8.95357 7.242 8.75807C7.1445 8.66007 7.0165 8.61157 6.8885 8.61157Z" fill="black" />
+        <path d="M14.0555 1.55554H10.5205C10.244 1.55554 10.0205 1.77904 10.0205 2.05554C10.0205 2.33204 10.244 2.55554 10.5205 2.55554H12.8485L8.75753 6.64654C8.56203 6.84204 8.56203 7.15804 8.75753 7.35354C8.95303 7.54904 9.26903 7.54904 9.46453 7.35354L13.5555 3.26254V5.59054C13.5555 5.86704 13.779 6.09054 14.0555 6.09054C14.332 6.09054 14.5555 5.86704 14.5555 5.59054V2.05554C14.5555 1.77954 14.332 1.55554 14.0555 1.55554Z" fill="black" />
+      </svg>`;
+
+      // 渲染移动端轮播（Swiper）
+      const mobileContainer = document.querySelector('.swiper-container.one-grid-bullet-slider');
+      const mobileWrapper = document.querySelector('.swiper-wrapper.shop-left-content');
+      
+      if (mobileWrapper && mobileContainer) {
+        // 构建移动端轮播HTML
+        let mobileHTML = '';
+        images.forEach((img, index) => {
+          const isFirst = index === 0;
+          mobileHTML += `
+            <div class="swiper-slide">
+              <div class="img ${isFirst ? 'overflow-visible' : ''} position-relative">
+                ${isFirst ? '<div class="overflow-hidden">' : ''}
+                  <img src="${img}" alt="shop-img" class="img-fluid w-100">
+                ${isFirst ? '</div>' : ''}
+                <a href="${img}" class="view-shop-item popup-img position-absolute bg-white rounded-pill d-flex justify-content-center align-items-center">
+                  ${svgIcon}
+                </a>
+                ${isFirst ? '<a href="#get-look" class="go-down bg-transparent border-0 position-absolute">SCROLL</a>' : ''}
+              </div>
+            </div>
+          `;
+        });
+        mobileWrapper.innerHTML = mobileHTML;
+
+        // 重新初始化移动端 Swiper
+        // 注意：需要确保 Swiper 已经加载
+        if (typeof (window as any).Swiper !== 'undefined') {
+          // 销毁已存在的实例
+          const existingSwiper = (mobileContainer as any).swiper;
+          if (existingSwiper) {
+            existingSwiper.destroy(true, true);
+          }
+
+          // 重新初始化
+          new (window as any).Swiper(mobileContainer, {
+            slidesPerView: 1,
+            spaceBetween: 0,
+            loop: images.length > 1,
+            autoplay: images.length > 1,
+            speed: 600,
+            effect: "fade",
+            pagination: {
+              el: mobileContainer.querySelector('.swiper-pagination'),
+              clickable: true,
+            },
+          });
+        }
+      }
+
+      // 渲染桌面端图片（非轮播，垂直排列）
+      const desktopWrapper = document.querySelector('.shop-left-content.d-none.d-lg-block');
+      if (desktopWrapper) {
+        let desktopHTML = '';
+        images.forEach((img, index) => {
+          const isFirst = index === 0;
+          desktopHTML += `
+            <div class="img ${isFirst ? 'overflow-visible' : ''} position-relative">
+              ${isFirst ? '<div class="overflow-hidden">' : ''}
+                <img src="${img}" alt="shop-img" class="img-fluid w-100">
+              ${isFirst ? '</div>' : ''}
+              <a href="${img}" class="view-shop-item popup-img position-absolute bg-white rounded-pill d-flex justify-content-center align-items-center">
+                ${svgIcon}
+              </a>
+              ${isFirst ? '<a href="#get-look" class="go-down bg-transparent border-0 position-absolute">SCROLL</a>' : ''}
+            </div>
+          `;
+        });
+        desktopWrapper.innerHTML = desktopHTML;
+      }
+
+      // 重新初始化 magnificPopup（用于图片轮播预览）
+      // 因为图片是动态生成的，需要重新绑定 popup-img 事件
+      if (typeof (window as any).jQuery !== 'undefined' && (window as any).jQuery.fn.magnificPopup) {
+        const $ = (window as any).jQuery;
+        // 销毁已存在的实例（如果有）
+        $('.popup-img').each(function(index: number, element: HTMLElement) {
+          const $this = $(element);
+          if ($this.data('magnificPopup')) {
+            $this.magnificPopup('destroy');
+          }
+        });
+        
+        // 重新初始化 magnificPopup
+        $('.popup-img').magnificPopup({
+          type: 'image',
+          gallery: {
+            enabled: true,
+          }
+        });
+        console.log('magnificPopup 已重新初始化');
+      }
+    }
+
+    // 渲染产品价格（初始渲染，使用产品主数据或默认变体）
+    function renderProductPrice(
+      articleMain: ArticleMainData,
+      variants: ArticleVariantsData,
+      discountRules: DiscountRulesData,
+      config: ReturnType<typeof getGlobalConfig>
+    ) {
+      // 如果有变体和属性，尝试找到默认选中的变体
+      if (variants.data.variants && variants.data.variants.length > 0 && 
+          variants.data.attributes && variants.data.attributes.length > 0) {
+        const selectedAttributes = getSelectedAttributes();
+        const matchedVariant = clientVariant.findVariantByAttributes(
+          selectedAttributes,
+          variants.data.variants,
+          variants.data.attributes
+        );
+
+        if (matchedVariant) {
+          // 使用变体的价格
+          updatePriceWithVariant(matchedVariant, discountRules, config);
+          return;
+        }
+      }
+
+      // 否则使用产品主数据的价格
+      updatePriceWithArticle(articleMain, discountRules, config);
+    }
+
+    // 渲染产品库存（初始渲染，使用产品主数据或默认变体）
+    function renderProductStock(
+      articleMain: ArticleMainData,
+      variants: ArticleVariantsData
+    ) {
+      // 如果有变体和属性，尝试找到默认选中的变体
+      if (variants.data.variants && variants.data.variants.length > 0 &&
+          variants.data.attributes && variants.data.attributes.length > 0) {
+        const selectedAttributes = getSelectedAttributes();
+        const matchedVariant = clientVariant.findVariantByAttributes(
+          selectedAttributes,
+          variants.data.variants,
+          variants.data.attributes
+        );
+
+        if (matchedVariant) {
+          // 使用变体的库存
+          updateStockWithVariant(matchedVariant);
+          return;
+        }
+      }
+
+      // 否则使用产品主数据的库存
+      updateStockWithArticle(articleMain);
+    }
+
+    // 获取折扣规则的多语言显示名称
+    function getDiscountDisplayName(discount: Discount, locale: string): string {
+      // 优先使用翻译
+      if (discount.translations && discount.translations.length > 0) {
+        const translation = discount.translations.find(t => t.language_code === locale);
+        if (translation && (translation as any).rule_name) {
+          return (translation as any).rule_name;
+        }
+      }
+      // 返回默认名称
+      return discount.rule_name || discount.rule_code || '折扣';
+    }
+
+    // 渲染折扣规则列表
+    function renderDiscountRules(
+      discountRules: DiscountRulesData,
+      locale: string
+    ) {
+      const discounts = discountRules.data.discounts || [];
+      const viewer = getDiscountViewerContext();
+      const activeDiscounts = discounts.filter(
+        (d) =>
+          d.status === 'active' && matchesDiscountUserRestrictions(d, viewer)
+      );
+
+      const outer = document.getElementById('discount-rules-outer');
+      const discountListContainer = document.querySelector('#discount-rules-list');
+      if (!discountListContainer) {
+        return;
+      }
+
+      if (activeDiscounts.length === 0) {
+        discountListContainer.innerHTML = '';
+        if (outer) {
+          outer.style.display = 'none';
+        }
+        return;
+      }
+
+      discountListContainer.innerHTML = '';
+      if (outer) {
+        outer.style.display = 'block';
+      }
+
+      activeDiscounts.forEach((discount) => {
+        const discountName = getDiscountDisplayName(discount, locale);
+        const displayName = discountName.length > 15
+          ? `${discountName.substring(0, 15)}…`
+          : discountName;
+
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className =
+          'product-discount-chip btn btn-sm btn-outline-danger rounded-pill';
+        chip.setAttribute('aria-label', discountName);
+        chip.title = discountName;
+
+        const icon = document.createElement('i');
+        icon.className = 'fa fa-tag me-1';
+        icon.setAttribute('aria-hidden', 'true');
+        chip.appendChild(icon);
+
+        const span = document.createElement('span');
+        span.textContent = displayName;
+        chip.appendChild(span);
+
+        chip.addEventListener('click', () => {
+          openDiscountModal(discount, locale);
+        });
+
+        discountListContainer.appendChild(chip);
+      });
+    }
+
+    // 打开折扣规则详情弹窗
+    function openDiscountModal(discount: Discount, locale: string) {
+      const modal = document.getElementById('discount-modal');
+      const overlay = document.getElementById('discount-modal-overlay');
+      const modalTitle = document.getElementById('discount-modal-title');
+      const modalContent = document.getElementById('discount-modal-content');
+      
+      if (!modal || !overlay || !modalTitle || !modalContent) {
+        return;
+      }
+
+      // 设置标题
+      modalTitle.textContent = getDiscountDisplayName(discount, locale);
+
+      const cfgDisc = getGlobalConfig();
+      if (isUnregisteredPriceUiHidden(cfgDisc.tenantId, productCategoryIdsForDiscount)) {
+        modalContent.innerHTML = `<p class="mb-0 text-content">${clientTranslations.get('price_login_to_view' as any)}</p>`;
+        modal.style.display = 'block';
+        overlay.style.display = 'block';
+        bindDiscountModalCloseEvents();
+        return;
+      }
+
+      // 生成内容
+      modalContent.innerHTML = generateDiscountModalContent(discount, locale);
+
+      // 显示弹窗
+      modal.style.display = 'block';
+      overlay.style.display = 'block';
+
+      // 绑定关闭事件
+      bindDiscountModalCloseEvents();
+    }
+
+    function tDiscount(key: string, vars?: Record<string, string | number>): string {
+      let s = clientTranslations.get(key as any);
+      if (vars) {
+        for (const [k, v] of Object.entries(vars)) {
+          s = s.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
+        }
+      }
+      return s;
+    }
+
+    function discountKindLabel(discountType: string): string {
+      const m: Record<string, string> = {
+        percentage: 'discount_kind_percentage',
+        fixed_amount: 'discount_kind_fixed_amount',
+        tier_price: 'discount_kind_tier_price',
+      };
+      const trKey = m[discountType];
+      return trKey ? tDiscount(trKey) : discountType;
+    }
+
+    function discountRuleKindLabel(ruleType: string): string {
+      const m: Record<string, string> = {
+        quantity: 'discount_rule_kind_quantity',
+        user_level: 'discount_rule_kind_user_level',
+        time_based: 'discount_rule_kind_time_based',
+        product_based: 'discount_rule_kind_product_based',
+        combo: 'discount_rule_kind_combo',
+      };
+      const trKey = m[ruleType];
+      return trKey ? tDiscount(trKey) : ruleType;
+    }
+
+    function tierPriceTypeLabel(priceType: string): string {
+      if (priceType === 'percentage') {
+        return tDiscount('discount_kind_percentage');
+      }
+      if (priceType === 'fixed_amount') {
+        return tDiscount('discount_kind_fixed_amount');
+      }
+      if (priceType === 'absolute_price') {
+        return tDiscount('discount_kind_absolute_price');
+      }
+      return priceType;
+    }
+
+    // 生成折扣规则详情内容（文案走 clientTranslations / 当前 __ASTRO_LOCALE__）
+    function generateDiscountModalContent(discount: Discount, locale: string): string {
+      let html = '';
+
+      const discountTypeName = discountKindLabel(discount.discount_type);
+      const ruleTypeName = discountRuleKindLabel(discount.rule_type);
+
+      html += `<div class="mb-3">`;
+      html += `<p class="mb-2"><strong>${tDiscount('discount_modal_lbl_discount_type')}</strong>${discountTypeName}</p>`;
+      html += `<p class="mb-2"><strong>${tDiscount('discount_modal_lbl_rule_type')}</strong>${ruleTypeName}</p>`;
+      html += `<p class="mb-2"><strong>${tDiscount('discount_modal_lbl_priority')}</strong>${discount.priority}</p>`;
+      html += `</div>`;
+
+      if (discount.discount_type !== 'tier_price' && discount.discount_value > 0) {
+        html += `<div class="mb-3">`;
+        if (discount.discount_type === 'percentage') {
+          html += `<p class="mb-0"><strong>${tDiscount('discount_modal_lbl_strength')}</strong>${(discount.discount_value * 100).toFixed(0)}%</p>`;
+        } else if (discount.discount_type === 'fixed_amount') {
+          html += `<p class="mb-0"><strong>${tDiscount('discount_modal_lbl_amount_off')}</strong>${discount.discount_value}</p>`;
+        }
+        html += `</div>`;
+      }
+
+      if (discount.quantity_restrictions) {
+        const { min_quantity, max_quantity } = discount.quantity_restrictions;
+        const parts: string[] = [];
+        if (min_quantity !== null && min_quantity !== undefined) {
+          parts.push(tDiscount('discount_modal_min_units', { n: min_quantity }));
+        }
+        if (max_quantity !== null && max_quantity !== undefined) {
+          parts.push(tDiscount('discount_modal_max_units', { n: max_quantity }));
+        }
+        html += `<div class="mb-3">`;
+        html += `<p class="mb-0"><strong>${tDiscount('discount_modal_lbl_quantity_limits')}</strong>`;
+        if (parts.length === 0) {
+          html += tDiscount('discount_modal_no_limit');
+        } else {
+          html += parts.join(' · ');
+        }
+        html += `</p></div>`;
+      }
+
+      if (discount.amount_restrictions) {
+        const { min_amount, max_amount } = discount.amount_restrictions;
+        const parts: string[] = [];
+        if (min_amount !== null && min_amount !== undefined) {
+          parts.push(tDiscount('discount_modal_min_amount_val', { amount: min_amount }));
+        }
+        if (max_amount !== null && max_amount !== undefined) {
+          parts.push(tDiscount('discount_modal_max_amount_val', { amount: max_amount }));
+        }
+        html += `<div class="mb-3">`;
+        html += `<p class="mb-0"><strong>${tDiscount('discount_modal_lbl_amount_limits')}</strong>`;
+        if (parts.length === 0) {
+          html += tDiscount('discount_modal_no_limit');
+        } else {
+          html += parts.join(' · ');
+        }
+        html += `</p></div>`;
+      }
+
+      if (discount.time_restrictions) {
+        const { valid_from, valid_until } = discount.time_restrictions;
+        const fmt = (iso: string) => new Date(iso).toLocaleString(locale.replace('_', '-'));
+        let periodText = '';
+        if (valid_from && valid_until) {
+          periodText = tDiscount('discount_modal_valid_range', { from: fmt(valid_from), to: fmt(valid_until) });
+        } else if (valid_from) {
+          periodText = tDiscount('discount_modal_valid_from', { from: fmt(valid_from) });
+        } else if (valid_until) {
+          periodText = tDiscount('discount_modal_valid_until', { until: fmt(valid_until) });
+        } else {
+          periodText = tDiscount('discount_modal_time_forever');
+        }
+        html += `<div class="mb-3">`;
+        html += `<p class="mb-0"><strong>${tDiscount('discount_modal_lbl_valid_time')}</strong>${periodText}</p>`;
+        html += `</div>`;
+      }
+
+      if (discount.discount_type === 'tier_price' && discount.tier_prices && discount.tier_prices.length > 0) {
+        const activeTierPrices = discount.tier_prices.filter(
+          (tp) => !tp.status || tp.status === 'active'
+        );
+        if (activeTierPrices.length > 0) {
+          html += `<div class="mb-3">`;
+          html += `<p class="mb-2"><strong>${tDiscount('discount_modal_lbl_tier_prices')}</strong></p>`;
+          html += `<table class="table table-bordered table-sm">`;
+          html += `<thead><tr><th>${tDiscount('discount_modal_th_qty_range')}</th><th>${tDiscount('discount_modal_th_price_type')}</th><th>${tDiscount('discount_modal_th_price_value')}</th></tr></thead>`;
+          html += `<tbody>`;
+
+          activeTierPrices.sort((a, b) => a.sort_order - b.sort_order);
+
+          activeTierPrices.forEach((tier) => {
+            const minQty = tier.min_quantity ?? 0;
+            const maxQtyRaw = tier.max_quantity;
+            const maxQty =
+              maxQtyRaw !== null && maxQtyRaw !== undefined
+                ? maxQtyRaw
+                : tDiscount('discount_modal_qty_infinity');
+            const quantityRange = `${minQty} - ${maxQty}`;
+
+            const priceTypeText = tierPriceTypeLabel(tier.price_type);
+            let priceValueText = '';
+            if (tier.price_type === 'percentage') {
+              priceValueText = `${(tier.price_value * 100).toFixed(0)}%`;
+            } else {
+              priceValueText = tier.price_value.toString();
+            }
+
+            html += `<tr>`;
+            html += `<td>${quantityRange}</td>`;
+            html += `<td>${priceTypeText}</td>`;
+            html += `<td>${priceValueText}</td>`;
+            html += `</tr>`;
+          });
+
+          html += `</tbody></table>`;
+          html += `</div>`;
+        }
+      }
+
+      if (discount.usage_restrictions) {
+        const { usage_limit, usage_count, per_user_limit } = discount.usage_restrictions;
+        html += `<div class="mb-3">`;
+        html += `<p class="mb-1"><strong>${tDiscount('discount_modal_lbl_usage_limits')}</strong></p>`;
+        if (usage_limit !== null && usage_limit !== undefined) {
+          html += `<p class="mb-1">${tDiscount('discount_modal_usage_total', {
+            limit: usage_limit,
+            used: usage_count || 0,
+          })}</p>`;
+        }
+        if (per_user_limit !== null && per_user_limit !== undefined) {
+          html += `<p class="mb-0">${tDiscount('discount_modal_usage_per_user', { limit: per_user_limit })}</p>`;
+        }
+        if (
+          (usage_limit === null || usage_limit === undefined) &&
+          (per_user_limit === null || per_user_limit === undefined)
+        ) {
+          html += `<p class="mb-0">${tDiscount('discount_modal_usage_none')}</p>`;
+        }
+        html += `</div>`;
+      }
+
+      return html;
+    }
+
+    // 绑定折扣弹窗关闭事件
+    function bindDiscountModalCloseEvents() {
+      const modal = document.getElementById('discount-modal');
+      const overlay = document.getElementById('discount-modal-overlay');
+      const closeBtn = document.getElementById('discount-modal-close');
+      
+      const closeModal = () => {
+        if (modal) {
+          modal.style.display = 'none';
+        }
+        if (overlay) {
+          overlay.style.display = 'none';
+        }
+      };
+
+      if (closeBtn) {
+        closeBtn.onclick = closeModal;
+      }
+      
+      if (overlay) {
+        overlay.onclick = closeModal;
+      }
+    }
+
+    // 判断属性是否是颜色属性
+    function isColorAttribute(attribute: Attribute): boolean {
+      // 检查属性值是否有 color_code，或者通过属性代码/名称判断
+      if (attribute.values && attribute.values.length > 0) {
+        // 如果有任何一个属性值有 color_code，则认为是颜色属性
+        return attribute.values.some((value: AttributeValue) => !!value.color_code);
+      }
+      // 也可以通过属性代码判断（如 "color", "colour" 等）
+      const code = (attribute.attribute_code || '').toLowerCase();
+      const name = (attribute.attribute_name || '').toLowerCase();
+      return code.includes('color') || code.includes('colour') || name.includes('颜色') || name.includes('colour') || name.includes('color');
+    }
+
+    // 隐藏属性容器（当没有属性时调用）
+    function hideAttributeContainers() {
+      const colorContainer = document.querySelector('.color-plates');
+      const sizeContainer = document.querySelector('.shop-sizes');
+      if (colorContainer) {
+        (colorContainer as HTMLElement).style.display = 'none';
+      }
+      if (sizeContainer) {
+        (sizeContainer as HTMLElement).style.display = 'none';
+      }
+    }
+
+    // 渲染产品属性（颜色、尺寸等）
+    function renderProductAttributes(
+      variants: ArticleVariantsData,
+      locale: string
+    ) {
+      const attributes = variants.data.attributes || [];
+      if (attributes.length === 0) {
+        // 如果没有属性，隐藏属性容器
+        hideAttributeContainers();
+        return;
+      }
+
+      // 查找颜色属性容器和尺寸属性容器
+      const colorContainer = document.querySelector('.color-plates');
+      const sizeContainerWrapper = document.querySelector('.shop-sizes') as HTMLElement;
+
+      // 分离颜色属性和普通属性
+      const colorAttributes = attributes.filter(attr => isColorAttribute(attr));
+      const normalAttributes = attributes.filter(attr => !isColorAttribute(attr));
+
+      console.log('=== 属性渲染调试信息 ===');
+      console.log('颜色属性数量:', colorAttributes.length);
+      console.log('普通属性数量:', normalAttributes.length);
+      console.log('所有属性:', attributes.map(a => ({ 
+        code: a.attribute_code, 
+        name: a.display_name, 
+        valuesCount: a.values.length,
+        values: a.values.map(v => ({ id: v.id, code: v.value_code, name: v.display_name }))
+      })));
+
+      // 渲染颜色属性（只渲染第一个）
+      if (colorAttributes.length > 0 && colorContainer) {
+        const attribute = colorAttributes[0];
+        const attributeDisplayName = clientVariant.getAttributeDisplayName(attribute, locale);
+        renderColorAttribute(attribute, attributeDisplayName, locale, colorContainer);
+        (colorContainer as HTMLElement).style.display = '';
+      } else if (colorContainer) {
+        // 如果没有颜色属性，隐藏颜色容器
+        (colorContainer as HTMLElement).style.display = 'none';
+      }
+
+      // 渲染所有普通属性
+      if (normalAttributes.length > 0 && sizeContainerWrapper) {
+        // 先保存按钮和其他元素（如果存在），避免被清空时删除
+        const guideButton = sizeContainerWrapper.querySelector('.guide-btn.cloth-size-btn');
+        const guideButtonHTML = guideButton ? guideButton.outerHTML : '';
+        const sidebarOverlay = sizeContainerWrapper.querySelector('.cloth-sidebar-overlay');
+        const sidebarOverlayHTML = sidebarOverlay ? sidebarOverlay.outerHTML : '';
+        const clothSidebar = sizeContainerWrapper.querySelector('.cloth-size-sidebar');
+        const clothSidebarHTML = clothSidebar ? clothSidebar.outerHTML : '';
+        
+        // 设置容器样式，使多个属性容器能够自动分行（垂直排列）
+        sizeContainerWrapper.style.flexDirection = 'column';
+        sizeContainerWrapper.style.flexWrap = 'nowrap';
+        sizeContainerWrapper.style.alignItems = 'flex-start';
+        sizeContainerWrapper.style.gap = '30px'; // 保持原有的gap-3间距
+        
+        // 清空包装容器，准备重新渲染
+        sizeContainerWrapper.innerHTML = '';
+        
+        // 普通属性：radio + label 药丸样式（与项目 Tailwind 模板一致）
+        normalAttributes.forEach((attribute) => {
+          const attributeDisplayName = clientVariant.getAttributeDisplayName(attribute, locale);
+
+          const pkg = document.createElement('div');
+          pkg.className = 'product-attribute-group mb-4';
+          pkg.setAttribute('data-attribute-id', attribute.id);
+
+          const titleWrap = document.createElement('div');
+          titleWrap.className = 'product-attribute-group__title text-tagline-2 mb-2 font-medium';
+          titleWrap.textContent = attributeDisplayName;
+
+          const optionsWrap = document.createElement('div');
+          optionsWrap.className = 'product-attribute-options flex flex-wrap gap-2';
+
+          attribute.values.forEach((value: AttributeValue, valueIndex: number) => {
+            const displayName = clientVariant.getAttributeValueDisplayName(value, locale);
+            const inputId = `attr-${attribute.id}-${value.id}`;
+
+            const label = document.createElement('label');
+            label.className = 'product-attribute-option';
+            label.htmlFor = inputId;
+
+            const input = document.createElement('input');
+            input.type = 'radio';
+            input.name = `attribute-${attribute.id}`;
+            input.id = inputId;
+            input.className = 'product-attribute-option__input';
+            input.value = value.id;
+            input.setAttribute('data-attribute-id', attribute.id);
+            input.setAttribute('data-attribute-value-id', value.id);
+            if (valueIndex === 0) {
+              input.checked = true;
+            }
+
+            input.addEventListener('change', () => {
+              handleAttributeChange(attribute.id, value.id);
+            });
+
+            const text = document.createElement('span');
+            text.className = 'product-attribute-option__text';
+            text.textContent = displayName;
+
+            label.appendChild(input);
+            label.appendChild(text);
+            optionsWrap.appendChild(label);
+          });
+
+          pkg.appendChild(titleWrap);
+          pkg.appendChild(optionsWrap);
+          sizeContainerWrapper.appendChild(pkg);
+        });
+        
+        // 恢复按钮和其他元素（如果存在）
+        if (guideButtonHTML) {
+          const tempDiv = document.createElement('div');
+          tempDiv.innerHTML = guideButtonHTML;
+          const restoredButton = tempDiv.firstElementChild as HTMLElement;
+          if (restoredButton) {
+            sizeContainerWrapper.appendChild(restoredButton);
+          }
+        }
+        if (sidebarOverlayHTML) {
+          const tempDiv = document.createElement('div');
+          tempDiv.innerHTML = sidebarOverlayHTML;
+          const restoredOverlay = tempDiv.firstElementChild as HTMLElement;
+          if (restoredOverlay) {
+            sizeContainerWrapper.appendChild(restoredOverlay);
+          }
+        }
+        if (clothSidebarHTML) {
+          const tempDiv = document.createElement('div');
+          tempDiv.innerHTML = clothSidebarHTML;
+          const restoredSidebar = tempDiv.firstElementChild as HTMLElement;
+          if (restoredSidebar) {
+            sizeContainerWrapper.appendChild(restoredSidebar);
+          }
+        }
+        
+        sizeContainerWrapper.style.display = '';
+      } else if (sizeContainerWrapper) {
+        // 如果没有普通属性，隐藏尺寸容器
+        sizeContainerWrapper.style.display = 'none';
+      }
+    }
+
+    // 渲染颜色属性
+    function renderColorAttribute(
+      attribute: Attribute,
+      attributeDisplayName: string,
+      locale: string,
+      container: Element
+    ) {
+      // 更新标题
+      const titleElement = container.querySelector('.color-title');
+      if (titleElement) {
+        const activeSpan = titleElement.querySelector('.active');
+        if (activeSpan) {
+          activeSpan.textContent = ''; // 初始时没有选中项
+        }
+        titleElement.innerHTML = `${attributeDisplayName}: <span class="active"></span>`;
+      }
+
+      // 渲染颜色选择器
+      const colorOptionsContainer =
+        container.querySelector('.product-attribute-options') ||
+        container.querySelector('.d-flex.align-items-center.gap-2');
+      if (colorOptionsContainer) {
+        colorOptionsContainer.innerHTML = '';
+        
+        attribute.values.forEach((value: AttributeValue, index: number) => {
+          const displayName = clientVariant.getAttributeValueDisplayName(value, locale);
+          const colorCode = value.color_code;
+          const inputId = `color-${attribute.id}-${value.id}`;
+
+          const label = document.createElement('label');
+          label.className = colorCode ? 'product-color-swatch' : 'product-attribute-option';
+          label.htmlFor = inputId;
+          label.title = displayName;
+
+          const input = document.createElement('input');
+          input.type = 'radio';
+          input.name = `color-${attribute.id}`;
+          input.id = inputId;
+          input.className = colorCode
+            ? 'product-color-swatch__input'
+            : 'product-attribute-option__input';
+          input.value = value.id;
+          input.setAttribute('data-attribute-id', attribute.id);
+          input.setAttribute('data-attribute-value-id', value.id);
+
+          if (colorCode) {
+            label.className = 'product-color-swatch product-color-swatch--labeled';
+            const dot = document.createElement('span');
+            dot.className = 'product-color-swatch__dot';
+            dot.style.backgroundColor = colorCode;
+            const text = document.createElement('span');
+            text.className = 'product-color-swatch__label';
+            text.textContent = displayName;
+            label.appendChild(input);
+            label.appendChild(dot);
+            label.appendChild(text);
+          } else {
+            const text = document.createElement('span');
+            text.className = 'product-attribute-option__text';
+            text.textContent = displayName;
+            label.appendChild(input);
+            label.appendChild(text);
+          }
+
+          if (index === 0) {
+            input.checked = true;
+            updateColorTitle(attributeDisplayName, displayName);
+          }
+
+          input.addEventListener('change', () => {
+            updateColorTitle(attributeDisplayName, displayName);
+            handleAttributeChange(attribute.id, value.id);
+          });
+
+          colorOptionsContainer.appendChild(label);
+        });
+      }
+    }
+
+    // 更新颜色标题的选中项
+    function updateColorTitle(attributeName: string, valueName: string) {
+      const colorContainer = document.querySelector('.color-plates');
+      const titleElement = colorContainer?.querySelector('.color-title');
+      if (titleElement) {
+        const activeSpan = titleElement.querySelector('.active');
+        if (activeSpan) {
+          activeSpan.textContent = valueName;
+        } else {
+          titleElement.innerHTML = `${attributeName}: <span class="active">${valueName}</span>`;
+        }
+      }
+    }
+
+    // 渲染普通属性（尺寸等）
+    function renderSizeAttribute(
+      attribute: Attribute,
+      attributeDisplayName: string,
+      locale: string,
+      container: Element
+    ) {
+      // 更新标题
+      const titleElement = container.querySelector('.color-title');
+      if (titleElement) {
+        const activeSpan = titleElement.querySelector('.active');
+        if (activeSpan) {
+          activeSpan.textContent = ''; // 初始时没有选中项
+        }
+        titleElement.innerHTML = `${attributeDisplayName}: <span class="active"></span>`;
+      }
+
+      // 渲染尺寸选择器
+      const sizeOptionsContainer = container.querySelector('.filter_info.filter_by_size');
+      if (sizeOptionsContainer) {
+        sizeOptionsContainer.innerHTML = '';
+        
+        attribute.values.forEach((value: AttributeValue, index: number) => {
+          const displayName = clientVariant.getAttributeValueDisplayName(value, locale);
+          
+          const formCheck = document.createElement('div');
+          formCheck.className = 'form-check';
+          
+          const input = document.createElement('input');
+          input.type = 'radio';
+          input.name = `size-${attribute.id}`;
+          input.className = 'form-check-input';
+          input.value = value.id;
+          input.id = `${attribute.id}-${value.id}-radio`;
+          input.setAttribute('data-attribute-id', attribute.id);
+          input.setAttribute('data-attribute-value-id', value.id);
+          if (index === 0) {
+            input.checked = true;
+          }
+          
+          const label = document.createElement('label');
+          label.className = 'form-check-label';
+          label.htmlFor = input.id;
+          label.textContent = displayName;
+          
+          // 点击事件
+          input.addEventListener('change', () => {
+            updateSizeTitle(attributeDisplayName, displayName, attribute.id);
+            handleAttributeChange(attribute.id, value.id);
+          });
+          
+          if (index === 0) {
+            // 初始化时更新标题
+            updateSizeTitle(attributeDisplayName, displayName, attribute.id);
+          }
+          
+          formCheck.appendChild(input);
+          formCheck.appendChild(label);
+          sizeOptionsContainer.appendChild(formCheck);
+        });
+      }
+    }
+
+    // 更新尺寸标题的选中项
+    function updateSizeTitle(attributeName: string, valueName: string, attributeId?: string) {
+      // 如果指定了 attributeId，只更新对应属性的标题
+      const sizeContainers = document.querySelectorAll('.shop-sizes .sizes');
+      sizeContainers.forEach((sizeContainer) => {
+        // 检查这个容器是否包含指定属性的 input
+        if (attributeId) {
+          const hasAttribute = sizeContainer.querySelector(`input[data-attribute-id="${attributeId}"]`);
+          if (!hasAttribute) {
+            return; // 跳过不匹配的容器
+          }
+        }
+        
+        const titleElement = sizeContainer.querySelector('.color-title');
+        if (titleElement) {
+          const currentTitle = titleElement.textContent || '';
+          // 检查标题是否匹配当前属性
+          if (attributeId && !currentTitle.includes(attributeName)) {
+            return; // 标题不匹配，跳过
+          }
+          
+          const activeSpan = titleElement.querySelector('.active');
+          if (activeSpan) {
+            activeSpan.textContent = valueName;
+          } else {
+            titleElement.innerHTML = `${attributeName}: <span class="active">${valueName}</span>`;
+          }
+        }
+      });
+    }
+
+    // 收集当前选中的属性值
+    function getSelectedAttributes(): SelectedAttributes {
+      const selectedAttributes: SelectedAttributes = {};
+
+      // 颜色等：radio（.color-plates / .product-attribute-option）
+      document.querySelectorAll('input[type="radio"][data-attribute-id]').forEach((input) => {
+        const radioInput = input as HTMLInputElement;
+        if (radioInput.checked) {
+          const attributeId = radioInput.getAttribute('data-attribute-id');
+          const attributeValueId = radioInput.getAttribute('data-attribute-value-id');
+          if (attributeId && attributeValueId) {
+            selectedAttributes[attributeId] = attributeValueId;
+          }
+        }
+      });
+
+      // Fastkart：普通属性为 ul.select-package > a.active（无 radio）
+      document.querySelectorAll('.shop-sizes .select-package a.active[data-attribute-id]').forEach((el) => {
+        const attributeId = el.getAttribute('data-attribute-id');
+        const attributeValueId = el.getAttribute('data-attribute-value-id');
+        if (attributeId && attributeValueId) {
+          selectedAttributes[attributeId] = attributeValueId;
+        }
+      });
+
+      return selectedAttributes;
+    }
+
+    // 处理属性变更
+    function handleAttributeChange(attributeId: string, attributeValueId: string) {
+      if (!globalProductData) {
+        return;
+      }
+
+      // 检查是否有变体和属性
+      if (!globalProductData.variants.data.variants || 
+          globalProductData.variants.data.variants.length === 0 ||
+          !globalProductData.variants.data.attributes || 
+          globalProductData.variants.data.attributes.length === 0) {
+        // 没有变体，直接返回
+        return;
+      }
+
+      // 收集当前所有选中的属性值
+      const selectedAttributes = getSelectedAttributes();
+      
+      // 查找匹配的变体
+      const matchedVariant = clientVariant.findVariantByAttributes(
+        selectedAttributes,
+        globalProductData.variants.data.variants,
+        globalProductData.variants.data.attributes
+      );
+
+      // 更新当前变体
+      currentVariant = matchedVariant;
+
+      // 如果已选择众筹，重新匹配回报档位
+      if (selectedCrowdfunding) {
+        crowdfundingRuntime.matchCrowdfundingRewardAndUpdate();
+      } else {
+        // 更新价格和库存
+        updatePriceAndStock(matchedVariant);
+      }
+    }
+
+    // 初始化默认变体（使用第一个选中的属性值）
+    function initializeDefaultVariant(
+      variants: ArticleVariantsData,
+      config: ReturnType<typeof getGlobalConfig>
+    ) {
+      // 检查是否有变体和属性
+      if (!variants.data.attributes || variants.data.attributes.length === 0 ||
+          !variants.data.variants || variants.data.variants.length === 0) {
+        return;
+      }
+
+      // 收集当前选中的属性值（应该是页面初始渲染时选中的第一个值）
+      const selectedAttributes = getSelectedAttributes();
+      
+      // 查找匹配的变体
+      const matchedVariant = clientVariant.findVariantByAttributes(
+        selectedAttributes,
+        variants.data.variants,
+        variants.data.attributes
+      );
+
+      // 更新当前变体
+      currentVariant = matchedVariant;
+
+      // 如果找到变体，更新价格和库存
+      if (matchedVariant) {
+        // 如果已选择众筹，重新匹配回报档位
+        if (selectedCrowdfunding) {
+          crowdfundingRuntime.matchCrowdfundingRewardAndUpdate();
+        } else {
+          updatePriceAndStock(matchedVariant);
+        }
+      }
+    }
+
+    // 更新价格和库存
+    function updatePriceAndStock(variant: Variant | null) {
+      if (!globalProductData) {
+        return;
+      }
+
+      // 如果已选择团购，优先使用团购价格和库存
+      if (selectedGroupBuying) {
+        groupBuyingRuntime.updatePriceAndStockWithGroupBuying();
+        return;
+      }
+
+      // 如果已选择众筹，检查是否有匹配的回报档位
+      if (selectedCrowdfunding && variant) {
+        crowdfundingRuntime.matchCrowdfundingRewardAndUpdate();
+        return;
+      }
+
+      if (variant) {
+        // 使用变体的价格和库存
+        updatePriceWithVariant(variant, globalProductData.discountRules, globalProductData.config);
+        updateStockWithVariant(variant);
+      } else {
+        // 如果没有匹配的变体，使用产品主数据的价格和库存
+        updatePriceWithArticle(globalProductData.articleMain, globalProductData.discountRules, globalProductData.config);
+        updateStockWithArticle(globalProductData.articleMain);
+      }
+    }
+
+    // 获取当前选择的数量
+    function getCurrentQuantity(): number {
+      const quantityInput = document.querySelector('.quantity-num, .qty-input') as HTMLInputElement;
+      if (quantityInput) {
+        const quantity = parseInt(quantityInput.value, 10);
+        return isNaN(quantity) || quantity < 1 ? 1 : quantity;
+      }
+      return 1; // 默认返回1
+    }
+
+    // 计算运费和税费（提前定义，供价格更新函数调用）
+    function calculateShippingAndTax() {
+      if (!globalProductData || !selectedAddress) {
+        // 没有地址时，设置错误状态
+        if (!selectedAddress) {
+          const errorMessage = clientTranslations.get('select_shipping_address');
+          setShippingTaxError('NO_ADDRESS', errorMessage);
+        }
+        hideShippingTaxSummary();
+        return;
+      }
+
+      const { shippingTemplates, taxTemplates, regionsData, config, articleMain } = globalProductData;
+
+      // 检查是否有运费模板和税费模板
+      if (!shippingTemplates || shippingTemplates.length === 0 || 
+          !taxTemplates || taxTemplates.length === 0 ||
+          !regionsData || !regionsData.data || !regionsData.data.regions) {
+        hideShippingTaxSummary();
+        return;
+      }
+
+      // 验证地址区域是否在产品的可销售区域内
+      const articleRegions = articleMain.data.regions || [];
+      const isRegionValid = clientShipping.validateShippingRegion(
+        articleRegions,
+        selectedAddress.region_id,
+        regionsData.data.regions
+      );
+
+      if (!isRegionValid) {
+        // 区域不可销售，显示错误信息，不进行计算
+        const errorMessage = clientTranslations.get('cannot_ship_to_region_error');
+        setShippingTaxError('CANNOT_SHIP_TO_REGION', errorMessage);
+        renderShippingTaxSummary({
+          subtotal: 0,
+          shippingFee: 0,
+          taxFee: 0,
+          total: 0,
+          shippingRuleName: '',
+          taxRuleName: '',
+          shippingError: errorMessage,
+          taxError: undefined,
+          currency: config.currentCurrency,
+        });
+        return;
+      }
+
+      // 获取当前数量和折扣后的单价
+      const quantity = getCurrentQuantity();
+      const basePriceInCurrentCurrency = currentDiscountedPrice || 0;
+
+      if (basePriceInCurrentCurrency <= 0) {
+        // 如果价格还没有计算出来，等待价格计算完成
+        return;
+      }
+
+      // 使用当前选中的运费模板和税费模板
+      const shippingTemplate = shippingTemplates[selectedShippingTemplateIndex];
+      const taxTemplate = taxTemplates[selectedTaxTemplateIndex];
+
+      if (!shippingTemplate || !taxTemplate) {
+        hideShippingTaxSummary();
+        return;
+      }
+
+      // 运费模板中的价格（base_price, unit_price, min_value）是基础货币
+      // 需要将当前货币的价格转换为基础货币用于计算
+      const isBaseCurrency = config.defaultCurrency && config.currentCurrency && 
+        (config.currentCurrency.is_base_currency || 
+         config.currentCurrency.currency_code === config.defaultCurrency.currency_code);
+      
+      // 将当前货币的价格转换为基础货币（除以汇率）
+      // exchangeRate 是从基础货币到当前货币的汇率，所以反向转换需要除以汇率
+      const basePriceInBaseCurrency = isBaseCurrency 
+        ? basePriceInCurrentCurrency 
+        : (basePriceInCurrentCurrency / (config.exchangeRate || 1));
+
+      // 计算运费（使用基础货币的价格）
+      const shippingResult = clientShipping.calculateShippingFee(
+        shippingTemplate,
+        selectedAddress,
+        regionsData.data.regions,
+        quantity,
+        basePriceInBaseCurrency,
+        currentVariant || undefined,
+        articleMain
+      );
+
+      // 如果当前模板没有匹配规则，且有多个模板，显示错误但不隐藏摘要（允许用户切换模板）
+      if (shippingResult.error && shippingTemplates.length > 1) {
+        const errorMessage = clientTranslations.get('current_template_no_matching_rule');
+        setShippingTaxError('NO_MATCHING_RULE', errorMessage);
+        // subtotal 是当前货币（basePriceInCurrentCurrency 是当前货币）
+        const subtotal = quantity * basePriceInCurrentCurrency;
+        renderShippingTaxSummary({
+          subtotal: subtotal,
+          shippingFee: 0,
+          taxFee: 0,
+          total: subtotal,
+          shippingRuleName: '',
+          taxRuleName: '',
+          shippingError: errorMessage,
+          taxError: undefined,
+          currency: config.currentCurrency,
+        });
+        return;
+      }
+
+      // 如果当前模板没有匹配规则，且只有一个模板，显示错误
+      if (shippingResult.error) {
+        setShippingTaxError('NO_MATCHING_RULE', shippingResult.error);
+        // subtotal 是当前货币（basePriceInCurrentCurrency 是当前货币）
+        const subtotal = quantity * basePriceInCurrentCurrency;
+        renderShippingTaxSummary({
+          subtotal: subtotal,
+          shippingFee: 0,
+          taxFee: 0,
+          total: subtotal,
+          shippingRuleName: '',
+          taxRuleName: '',
+          shippingError: shippingResult.error,
+          taxError: undefined,
+          currency: config.currentCurrency,
+        });
+        return;
+      }
+
+      // 计算税费（使用基础货币的价格）
+      const taxResult = clientShipping.calculateTaxFee(
+        taxTemplate,
+        selectedAddress,
+        regionsData.data.regions,
+        quantity,
+        basePriceInBaseCurrency
+      );
+
+      // 运费和税费的计算结果都是基础货币，需要转换为当前货币用于显示
+      const exchangeRate = config.exchangeRate || 1;
+      const shippingFeeInCurrentCurrency = shippingResult.shippingFee * exchangeRate;
+      const taxFeeInCurrentCurrency = taxResult.taxFee * exchangeRate;
+
+      // 计算小计（数量 × 折扣后单价，当前货币）
+      const subtotal = quantity * basePriceInCurrentCurrency;
+
+      // 计算总计（当前货币）
+      const total = subtotal + shippingFeeInCurrentCurrency + taxFeeInCurrentCurrency;
+
+      // 用于显示的值（当前货币）
+      const displaySubtotal = subtotal;
+      const displayShipping = shippingFeeInCurrentCurrency;
+      const displayTax = taxFeeInCurrentCurrency;
+      const displayTotal = total;
+
+      // 如果计算成功且没有错误，清除错误状态
+      if (!shippingResult.error && !taxResult.error) {
+        clearShippingTaxError();
+        
+        // 保存当前运费和税费信息（用于添加到购物车）
+        // 注意：保存当前货币的值，添加到购物车时会转换为基础货币
+        const shippingTemplate = shippingTemplates[selectedShippingTemplateIndex];
+        const taxTemplate = taxTemplates[selectedTaxTemplateIndex];
+        currentShippingTaxInfo = {
+          shippingFee: displayShipping, // 当前货币
+          taxFee: displayTax, // 当前货币
+          shippingTemplateId: shippingTemplate?.data.template.id,
+          taxTemplateId: taxTemplate?.data.template.id,
+        };
+      } else {
+        // 如果仍有错误，设置错误状态
+        if (shippingResult.error) {
+          setShippingTaxError('NO_MATCHING_RULE', shippingResult.error);
+        }
+        if (taxResult.error) {
+          // 税费错误暂时使用相同的错误类型，可以根据需要扩展
+          setShippingTaxError('NO_MATCHING_RULE', taxResult.error);
+        }
+        // 如果有错误，清空运费税费信息
+        currentShippingTaxInfo = null;
+      }
+
+      // 渲染结果
+      // 注意：这些值已经是当前货币，不需要转换
+      renderShippingTaxSummary({
+        subtotal: displaySubtotal,
+        shippingFee: displayShipping,
+        taxFee: displayTax,
+        total: displayTotal,
+        shippingRuleName: shippingResult.ruleName || '',
+        taxRuleName: taxResult.ruleName || '',
+        shippingError: shippingResult.error,
+        taxError: taxResult.error,
+        currency: config.currentCurrency,
+      });
+    }
+
+    // 隐藏运费和税费摘要
+    function hideShippingTaxSummary() {
+      const summaryDetails = document.getElementById('summary-details');
+      if (summaryDetails) {
+        summaryDetails.style.display = 'none';
+      }
+      // 隐藏时也清除错误状态（因为摘要已隐藏，不再需要显示错误）
+      clearShippingTaxError();
+    }
+
+    // 渲染运费和税费摘要
+    function renderShippingTaxSummary(data: {
+      subtotal: number;
+      shippingFee: number;
+      taxFee: number;
+      total: number;
+      shippingRuleName: string;
+      taxRuleName: string;
+      shippingError?: string;
+      taxError?: string;
+      currency: any;
+    }) {
+      const summaryDetails = document.getElementById('summary-details');
+      const errorElement = document.getElementById('shipping-tax-error');
+      const errorMessage = document.getElementById('error-message');
+
+      if (!summaryDetails) {
+        return;
+      }
+
+      // 检查是否有错误
+      const errors: string[] = [];
+      if (data.shippingError) {
+        errors.push(data.shippingError);
+      }
+      if (data.taxError) {
+        errors.push(data.taxError);
+      }
+
+      // 显示/隐藏错误提示
+      if (errorElement && errorMessage) {
+        if (errors.length > 0) {
+          errorMessage.textContent = errors.join('; ');
+          errorElement.style.display = 'block';
+        } else {
+          errorElement.style.display = 'none';
+        }
+      }
+
+      // 更新金额显示
+      const subtotalValue = document.getElementById('subtotal-value');
+      const shippingValue = document.getElementById('shipping-value');
+      const taxValue = document.getElementById('tax-value');
+      const totalValue = document.getElementById('total-value');
+      const shippingRuleName = document.getElementById('shipping-rule-name');
+      const taxRuleName = document.getElementById('tax-rule-name');
+
+      if (subtotalValue) {
+        subtotalValue.textContent = data.currency 
+          ? clientPricing.formatPrice(data.subtotal, data.currency)
+          : data.subtotal.toFixed(2);
+      }
+
+      if (shippingValue) {
+        shippingValue.textContent = data.currency
+          ? clientPricing.formatPrice(data.shippingFee, data.currency)
+          : data.shippingFee.toFixed(2);
+      }
+
+      if (taxValue) {
+        taxValue.textContent = data.currency
+          ? clientPricing.formatPrice(data.taxFee, data.currency)
+          : data.taxFee.toFixed(2);
+      }
+
+      if (totalValue) {
+        totalValue.textContent = data.currency
+          ? clientPricing.formatPrice(data.total, data.currency)
+          : data.total.toFixed(2);
+      }
+
+      // 显示规则名称
+      if (shippingRuleName && data.shippingRuleName) {
+        shippingRuleName.textContent = `(${data.shippingRuleName})`;
+      } else if (shippingRuleName) {
+        shippingRuleName.textContent = '';
+      }
+
+      if (taxRuleName && data.taxRuleName) {
+        taxRuleName.textContent = `(${data.taxRuleName})`;
+      } else if (taxRuleName) {
+        taxRuleName.textContent = '';
+      }
+
+      // 显示摘要详情容器（但内容是否显示由折叠状态控制）
+      summaryDetails.style.display = 'block';
+      
+      // 如果地址选择器已展开，则同时展开摘要详情
+      const detailsCollapsible = document.getElementById('shipping-details-collapsible');
+      const summaryCollapsible = document.getElementById('summary-details-collapsible');
+      if (detailsCollapsible && summaryCollapsible) {
+        // 如果地址详情是展开的，则摘要详情也展开
+        if (detailsCollapsible.style.display === 'block') {
+          summaryCollapsible.style.display = 'block';
+        }
+      }
+    }
+
+    // 使用变体价格更新显示
+    function updatePriceWithVariant(
+      variant: Variant,
+      discountRules: DiscountRulesData,
+      config: Record<string, unknown>
+    ) {
+      const typedConfig = config as ReturnType<typeof getGlobalConfig>;
+      // 获取当前选择的数量
+      const quantity = getCurrentQuantity();
+      console.log('=== 变体价格更新调试 ===');
+      console.log('当前数量:', quantity);
+
+      // 获取变体的基础价格
+      const basePrice = variant.pricing.base_price || 0;
+      console.log('变体基础价格:', basePrice);
+
+      // 应用汇率转换（如果变体的货币与当前货币不同，可能需要转换）
+      // 这里假设变体的货币已经是目标货币，或者需要根据实际情况转换
+      const convertedPrice = clientPricing.convertCurrency(basePrice, typedConfig.exchangeRate);
+      console.log('转换后价格（原价）:', convertedPrice);
+
+      // 使用 applyDiscountWithDetails 获取折扣详情，判断是否有折扣被应用
+      console.log('折扣规则数量:', discountRules.data.discounts?.length || 0);
+      console.log('折扣规则:', discountRules.data.discounts);
+      
+      const discountResult = clientPricing.applyDiscountWithDetails(
+        convertedPrice,
+        quantity, // 使用实际选择的数量
+        discountRules.data.discounts,
+        getDiscountViewerContext()
+      );
+
+      console.log('折扣计算结果:', discountResult);
+      console.log('折扣金额:', discountResult.discountAmount);
+      console.log('最终价格:', discountResult.finalPrice);
+      console.log('是否有折扣:', discountResult.discountAmount > 0);
+      console.log('应用的折扣数量:', discountResult.appliedDiscounts?.length || 0);
+
+      // discountResult.finalPrice 是基于 convertedPrice 应用折扣后的价格（单价）
+      const finalPrice = discountResult.finalPrice;
+
+      const priceMode =
+        selectedGroupBuying ? 'group_buy' : selectedCrowdfunding ? 'crowdfunding' : 'plain';
+      const adj = adjustPlainProductPricesForGlobalTier(
+        convertedPrice,
+        finalPrice,
+        discountResult.discountAmount,
+        priceMode,
+        typedConfig.tenantId,
+        productCategoryIdsForDiscount
+      );
+
+      // 保存当前折扣后的单价（用于运费和税费计算）
+      currentDiscountedPrice = adj.displayDiscounted;
+
+      // 保存当前价格信息（用于添加到购物车）
+      currentPriceInfo = {
+        originalPrice: adj.displayOriginal,
+        discountedPrice: adj.displayDiscounted,
+        discountAmount: discountResult.discountAmount,
+        discountResult: discountResult,
+      };
+
+      // 显示价格（原价和折扣价格）
+      renderPriceDisplay(
+        adj.displayOriginal,
+        adj.displayDiscounted,
+        adj.showStrikeDiscount,
+        typedConfig.currentCurrency
+      );
+
+      // 如果已选择地址，重新计算运费和税费
+      if (selectedAddress && globalProductData) {
+        calculateShippingAndTax();
+      }
+    }
+
+    // 使用产品主数据价格更新显示
+    function updatePriceWithArticle(
+      articleMain: ArticleMainData,
+      discountRules: DiscountRulesData,
+      config: ReturnType<typeof getGlobalConfig>
+    ) {
+      // 获取当前选择的数量
+      const quantity = getCurrentQuantity();
+      console.log('=== 产品主数据价格更新调试 ===');
+      console.log('当前数量:', quantity);
+
+      // 获取基础价格（从主数据）
+      const basePrice = parseFloat(
+        articleMain.data.article.metadata.template_fields.price || '0'
+      );
+      console.log('产品基础价格:', basePrice);
+
+      // 应用汇率转换
+      const convertedPrice = clientPricing.convertCurrency(basePrice, config.exchangeRate);
+      console.log('转换后价格（原价）:', convertedPrice);
+
+      // 使用 applyDiscountWithDetails 获取折扣详情，判断是否有折扣被应用
+      console.log('折扣规则数量:', discountRules.data.discounts?.length || 0);
+      console.log('折扣规则:', discountRules.data.discounts);
+      
+      const discountResult = clientPricing.applyDiscountWithDetails(
+        convertedPrice,
+        quantity, // 使用实际选择的数量
+        discountRules.data.discounts,
+        getDiscountViewerContext()
+      );
+
+      console.log('折扣计算结果:', discountResult);
+      console.log('折扣金额:', discountResult.discountAmount);
+      console.log('最终价格:', discountResult.finalPrice);
+      console.log('是否有折扣:', discountResult.discountAmount > 0);
+      console.log('应用的折扣数量:', discountResult.appliedDiscounts?.length || 0);
+
+      // discountResult.finalPrice 是基于 convertedPrice 应用折扣后的价格（单价）
+      const finalPrice = discountResult.finalPrice;
+
+      const priceMode =
+        selectedGroupBuying ? 'group_buy' : selectedCrowdfunding ? 'crowdfunding' : 'plain';
+      const adj = adjustPlainProductPricesForGlobalTier(
+        convertedPrice,
+        finalPrice,
+        discountResult.discountAmount,
+        priceMode,
+        config.tenantId,
+        productCategoryIdsForDiscount
+      );
+
+      // 保存当前折扣后的单价（用于运费和税费计算）
+      currentDiscountedPrice = adj.displayDiscounted;
+
+      // 保存当前价格信息（用于添加到购物车）
+      currentPriceInfo = {
+        originalPrice: adj.displayOriginal,
+        discountedPrice: adj.displayDiscounted,
+        discountAmount: discountResult.discountAmount,
+        discountResult: discountResult,
+      };
+
+      // 显示价格（原价和折扣价格）
+      renderPriceDisplay(
+        adj.displayOriginal,
+        adj.displayDiscounted,
+        adj.showStrikeDiscount,
+        config.currentCurrency
+      );
+
+      // 如果已选择地址，重新计算运费和税费
+      if (selectedAddress && globalProductData) {
+        calculateShippingAndTax();
+      }
+    }
+
+    // 渲染价格显示（原价和折扣价格）
+    function renderPriceDisplay(
+      originalPrice: number,
+      discountedPrice: number,
+      hasDiscount: boolean,
+      currency: any
+    ) {
+      console.log('=== 价格显示渲染调试 ===');
+      console.log('原价:', originalPrice);
+      console.log('折扣价格:', discountedPrice);
+      console.log('hasDiscount:', hasDiscount);
+      console.log('discountedPrice < originalPrice:', discountedPrice < originalPrice);
+      console.log('货币:', currency);
+
+      const fkCfg = getGlobalConfig();
+      const fkPriceEl = document.querySelector('.price-rating .price') as HTMLElement | null;
+      if (isUnregisteredPriceUiHidden(fkCfg.tenantId, productCategoryIdsForDiscount)) {
+        const msg = clientTranslations.get('price_login_to_view' as any);
+        const stockStr = `<span class="offer theme-color">(<span class="text-muted">${clientTranslations.get('stock')}: </span><span class="fk-stock-value">0</span>)</span>`;
+        if (fkPriceEl) {
+          fkPriceEl.innerHTML = `<span class="text-content">${msg}</span> ${stockStr}`;
+        }
+        return;
+      }
+
+      const shouldShowDiscount = hasDiscount && discountedPrice < originalPrice;
+      const showPrice = shouldShowDiscount ? discountedPrice : originalPrice;
+      if (fkPriceEl) {
+        const stockStr = `<span class="offer theme-color">(<span class="text-muted">${clientTranslations.get('stock')}: </span><span class="fk-stock-value">0</span>)</span>`;
+        if (currency) {
+          const main = clientPricing.formatPrice(showPrice, currency);
+          if (shouldShowDiscount) {
+            const orig = clientPricing.formatPrice(originalPrice, currency);
+            fkPriceEl.innerHTML = `<span class="text-decoration-line-through text-muted me-2">${orig}</span><span>${main}</span> ${stockStr}`;
+          } else {
+            fkPriceEl.innerHTML = `${main} ${stockStr}`;
+          }
+        } else {
+          fkPriceEl.innerHTML = `${showPrice.toFixed(2)} ${stockStr}`;
+        }
+        return;
+      }
+
+      const originalPriceElement = document.querySelector('.original-price-value');
+      const originalPriceLabel = document.querySelector('.original-price-label');
+      const discountedPriceElement = document.querySelector('.discounted-price');
+      const discountedPriceLabel = document.querySelector('.discounted-price-label');
+      const discountedPriceValueElement = document.querySelector('.discounted-price-value');
+
+      if (!originalPriceElement || !discountedPriceElement || !discountedPriceValueElement) {
+        console.error('价格显示元素未找到:', {
+          originalPriceElement: !!originalPriceElement,
+          discountedPriceElement: !!discountedPriceElement,
+          discountedPriceValueElement: !!discountedPriceValueElement
+        });
+        return;
+      }
+
+      // 更新原价标签（国际化）
+      if (originalPriceLabel) {
+        originalPriceLabel.textContent = clientTranslations.get('original_price');
+      }
+
+      // 显示原价
+      if (currency) {
+        const formattedOriginalPrice = clientPricing.formatPrice(originalPrice, currency);
+        (originalPriceElement as HTMLElement).textContent = formattedOriginalPrice;
+        console.log('格式化原价:', formattedOriginalPrice);
+      } else {
+        (originalPriceElement as HTMLElement).textContent = originalPrice.toFixed(2);
+      }
+
+      // 如果有折扣，显示折扣价格；否则隐藏折扣价格（与上方 Fastkart 分支共用 shouldShowDiscount）
+      console.log('是否显示折扣价格:', shouldShowDiscount);
+      
+      if (shouldShowDiscount) {
+        // 更新折扣价格标签（国际化）
+        if (discountedPriceLabel) {
+          discountedPriceLabel.textContent = clientTranslations.get('discounted_price');
+        }
+
+        if (currency) {
+          const formattedDiscountedPrice = clientPricing.formatPrice(discountedPrice, currency);
+          (discountedPriceValueElement as HTMLElement).textContent = formattedDiscountedPrice;
+          console.log('格式化折扣价格:', formattedDiscountedPrice);
+        } else {
+          (discountedPriceValueElement as HTMLElement).textContent = discountedPrice.toFixed(2);
+        }
+        (discountedPriceElement as HTMLElement).style.display = '';
+        console.log('折扣价格元素已显示');
+      } else {
+        (discountedPriceElement as HTMLElement).style.display = 'none';
+        console.log('折扣价格元素已隐藏');
+      }
+    }
+
+    const groupBuyingRuntime = createShopGroupBuying({
+      getSelected: () => selectedGroupBuying,
+      setSelected: (a) => {
+        selectedGroupBuying = a;
+      },
+      getGlobalProductData: () => globalProductData,
+      getCurrentVariant: () => currentVariant,
+      getDiscountViewerContext,
+      getCurrentQuantity,
+      updatePriceAndStock,
+      renderPriceDisplay,
+      setCurrentDiscountedPrice: (n) => {
+        currentDiscountedPrice = n;
+      },
+      setCurrentPriceInfo: (info) => {
+        currentPriceInfo = info;
+      },
+      getSelectedAddress: () => selectedAddress,
+      calculateShippingAndTax,
+    });
+
+    // 使用变体库存更新显示
+    function updateStockWithVariant(variant: Variant) {
+      const stock = variant.inventory?.available_quantity || 0;
+
+      const fkStock = document.querySelector('.price-rating .fk-stock-value');
+      if (fkStock) {
+        fkStock.textContent = stock.toString();
+        return;
+      }
+
+      // 显示库存信息（与价格并排）
+      const stockElement = document.querySelector('.shop-prd-title .stock');
+      const stockLabel = document.querySelector('.shop-prd-title .stock-label');
+      const stockValueElement = document.querySelector('.shop-prd-title .stock-value');
+      
+      if (stockElement && stockValueElement) {
+        // 更新库存标签（国际化）
+        if (stockLabel) {
+          stockLabel.textContent = clientTranslations.get('stock');
+        }
+        stockValueElement.textContent = stock.toString();
+        // 显示库存元素
+        (stockElement as HTMLElement).style.display = 'inline';
+      }
+    }
+
+    // 使用产品主数据库存更新显示
+    function updateStockWithArticle(articleMain: ArticleMainData) {
+      const stock = parseInt(
+        articleMain.data.article.metadata.template_fields["in stock"] || '0'
+      );
+
+      const fkStock = document.querySelector('.price-rating .fk-stock-value');
+      if (fkStock) {
+        fkStock.textContent = stock.toString();
+        return;
+      }
+
+      // 显示库存信息（与价格并排）
+      const stockElement = document.querySelector('.shop-prd-title .stock');
+      const stockLabel = document.querySelector('.shop-prd-title .stock-label');
+      const stockValueElement = document.querySelector('.shop-prd-title .stock-value');
+      
+      if (stockElement && stockValueElement) {
+        // 更新库存标签（国际化）
+        if (stockLabel) {
+          stockLabel.textContent = clientTranslations.get('stock');
+        }
+        stockValueElement.textContent = stock.toString();
+        // 显示库存元素
+        (stockElement as HTMLElement).style.display = 'inline';
+      }
+    }
+
+    const crowdfundingRuntime = createShopCrowdfunding({
+      getSelectedActivity: () => selectedCrowdfunding,
+      setSelectedActivity: (a) => {
+        selectedCrowdfunding = a;
+      },
+      getMatchedReward: () => matchedCrowdfundingReward,
+      setMatchedReward: (r) => {
+        matchedCrowdfundingReward = r;
+      },
+      getGlobalProductData: () => globalProductData,
+      getCurrentVariant: () => currentVariant,
+      getDiscountViewerContext,
+      getCurrentQuantity,
+      getLocale: () => getGlobalConfig().locale,
+      updatePriceAndStock,
+      updatePriceWithVariant,
+      updateStockWithVariant,
+      renderPriceDisplay,
+      setCurrentDiscountedPrice: (n) => {
+        currentDiscountedPrice = n;
+      },
+      setCurrentPriceInfo: (info) => {
+        currentPriceInfo = info;
+      },
+      getSelectedAddress: () => selectedAddress,
+      calculateShippingAndTax,
+    });
+
+    // 渲染产品描述和 metadata 按钮
+    function renderProductDescription(articleContent: ArticleContentData) {
+      const metadata = articleContent.data.metadata || {};
+      const metadataKeys = Object.keys(metadata).filter(key => metadata[key]); // 过滤掉空值
+      const hasContent = !!articleContent.data.content;
+      
+      // 1. 渲染按钮
+      const buttonList = document.querySelector('.prd-description ul.list-unstyled');
+      if (buttonList) {
+        // 如果没有 content 也没有 metadata，隐藏按钮区域
+        if (!hasContent && metadataKeys.length === 0) {
+          const prdDescriptionContainer = buttonList.closest('.prd-description');
+          if (prdDescriptionContainer) {
+            (prdDescriptionContainer as HTMLElement).style.display = 'none';
+          }
+          return;
+        }
+        
+        // 清空现有按钮
+        buttonList.innerHTML = '';
+        
+        let defaultKey: string | null = null;
+        let defaultIndex = 0;
+        
+        // 如果有 content，添加 DESCRIPTION 按钮
+        if (hasContent) {
+          const listItem = document.createElement('li');
+          const button = document.createElement('button');
+          button.className = 'bg-transparent prd-side-btn active'; // 默认激活
+          button.textContent = 'DESCRIPTION';
+          button.setAttribute('data-content-type', 'description');
+          
+          button.addEventListener('click', () => {
+            handleButtonClick(buttonList, button);
+            renderDescriptionContent(articleContent);
+            openSidebar();
+          });
+          
+          listItem.appendChild(button);
+          buttonList.appendChild(listItem);
+          defaultKey = 'DESCRIPTION';
+          defaultIndex = 1;
+        }
+        
+        // 为每个 metadata 键创建按钮
+        metadataKeys.forEach((key, index) => {
+          const listItem = document.createElement('li');
+          const button = document.createElement('button');
+          button.className = 'bg-transparent prd-side-btn';
+          button.textContent = key;
+          button.setAttribute('data-metadata-key', key);
+          
+          // 如果没有 content，第一个 metadata 按钮默认激活
+          if (!hasContent && index === 0) {
+            button.classList.add('active');
+            defaultKey = key;
+          }
+          
+          // 点击事件
+          button.addEventListener('click', () => {
+            handleButtonClick(buttonList, button);
+            renderMetadataContent(articleContent, key);
+            openSidebar();
+          });
+          
+          listItem.appendChild(button);
+          buttonList.appendChild(listItem);
+        });
+        
+        // 2. 初始渲染内容
+        if (hasContent) {
+          // 如果有 content，默认显示 content
+          renderDescriptionContent(articleContent);
+        } else if (metadataKeys.length > 0) {
+          // 如果没有 content，显示第一个 metadata 的内容
+          renderMetadataContent(articleContent, metadataKeys[0]);
+        }
+      }
+    }
+
+    // 打开侧边栏
+    function openSidebar() {
+      const sidebar = document.querySelector('.prd-sidebar-info');
+      const overlay = document.querySelector('.prd-sidebar-overlay');
+      if (sidebar) {
+        sidebar.classList.add('active');
+      }
+      if (overlay) {
+        overlay.classList.add('active');
+      }
+    }
+
+    // 关闭侧边栏
+    function closeSidebar() {
+      const sidebar = document.querySelector('.prd-sidebar-info');
+      const overlay = document.querySelector('.prd-sidebar-overlay');
+      if (sidebar) {
+        sidebar.classList.remove('active');
+      }
+      if (overlay) {
+        overlay.classList.remove('active');
+      }
+    }
+
+    // 处理按钮点击（切换 active 状态）
+    function handleButtonClick(buttonList: Element, activeButton: HTMLButtonElement) {
+      // 移除所有按钮的 active 类
+      buttonList.querySelectorAll('.prd-side-btn').forEach(btn => {
+        btn.classList.remove('active');
+      });
+      // 添加当前按钮的 active 类
+      activeButton.classList.add('active');
+    }
+
+    // 渲染 description 内容（content 字段）
+    function renderDescriptionContent(articleContent: ArticleContentData) {
+      const sidebarInfoElement = document.querySelector('.prd-sidebar-info');
+      if (sidebarInfoElement && articleContent.data.content) {
+        // 构建包含头部的完整HTML结构
+        const headerHTML = `
+          <div class="header-info pb40 d-flex justify-content-between gap-4 align-items-center">
+            <h4 class="title">DESCRIPTION</h4>
+            <button class="close-prd-sidebar bg-transparent border-0">
+              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 11 11" fill="none">
+                <path d="M0.988364 10.4999C0.891779 10.4999 0.797359 10.4713 0.717046 10.4176C0.636734 10.364 0.574137 10.2877 0.537173 10.1985C0.500209 10.1092 0.49054 10.0111 0.509387 9.91633C0.528235 9.8216 0.574753 9.73459 0.643057 9.6663L9.66633 0.64303C9.75791 0.55145 9.88212 0.5 10.0116 0.5C10.1412 0.5 10.2654 0.55145 10.3569 0.64303C10.4485 0.734611 10.5 0.858822 10.5 0.988337C10.5 1.11785 10.4485 1.24206 10.3569 1.33364L1.33367 10.3569C1.28837 10.4023 1.23454 10.4383 1.17528 10.4628C1.11602 10.4874 1.0525 10.5 0.988364 10.4999Z" fill="#1D1D1D"/>
+                <path d="M10.0116 10.4999C9.94747 10.5 9.88395 10.4874 9.82469 10.4628C9.76543 10.4383 9.71161 10.4023 9.6663 10.3569L0.643031 1.33364C0.55145 1.24206 0.5 1.11785 0.5 0.988337C0.5 0.858822 0.55145 0.734611 0.643031 0.64303C0.734611 0.55145 0.858822 0.5 0.988337 0.5C1.11785 0.5 1.24206 0.55145 1.33364 0.64303L10.3569 9.6663C10.4252 9.73459 10.4717 9.8216 10.4906 9.91633C10.5094 10.0111 10.4998 10.1092 10.4628 10.1985C10.4258 10.2877 10.3632 10.364 10.2829 10.4176C10.2026 10.4713 10.1082 10.4999 10.0116 10.4999Z" fill="#1D1D1D"/>
+              </svg>
+            </button>
+          </div>
+        `;
+        
+        // content 是 HTML 字符串，需要提取出 .details 部分，然后组合头部
+        // 如果 content 中包含 .details，只取 .details 的内容；否则使用整个 content
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = articleContent.data.content;
+        const detailsContent = tempDiv.querySelector('.details')?.innerHTML || articleContent.data.content;
+        
+        // 组合头部和内容
+        sidebarInfoElement.innerHTML = headerHTML + `<div class="details">${detailsContent}</div>`;
+        
+        // 重新绑定关闭按钮事件
+        bindCloseEvents();
+      }
+    }
+
+    // 渲染指定 metadata 键的内容
+    function renderMetadataContent(articleContent: ArticleContentData, key: string) {
+      const metadata = articleContent.data.metadata || {};
+      const content = metadata[key];
+      
+      const sidebarInfoElement = document.querySelector('.prd-sidebar-info');
+      if (sidebarInfoElement && content) {
+        // 构建包含头部的完整HTML结构，标题显示 metadata 的键
+        const headerHTML = `
+          <div class="header-info pb40 d-flex justify-content-between gap-4 align-items-center">
+            <h4 class="title">${key}</h4>
+            <button class="close-prd-sidebar bg-transparent border-0">
+              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 11 11" fill="none">
+                <path d="M0.988364 10.4999C0.891779 10.4999 0.797359 10.4713 0.717046 10.4176C0.636734 10.364 0.574137 10.2877 0.537173 10.1985C0.500209 10.1092 0.49054 10.0111 0.509387 9.91633C0.528235 9.8216 0.574753 9.73459 0.643057 9.6663L9.66633 0.64303C9.75791 0.55145 9.88212 0.5 10.0116 0.5C10.1412 0.5 10.2654 0.55145 10.3569 0.64303C10.4485 0.734611 10.5 0.858822 10.5 0.988337C10.5 1.11785 10.4485 1.24206 10.3569 1.33364L1.33367 10.3569C1.28837 10.4023 1.23454 10.4383 1.17528 10.4628C1.11602 10.4874 1.0525 10.5 0.988364 10.4999Z" fill="#1D1D1D"/>
+                <path d="M10.0116 10.4999C9.94747 10.5 9.88395 10.4874 9.82469 10.4628C9.76543 10.4383 9.71161 10.4023 9.6663 10.3569L0.643031 1.33364C0.55145 1.24206 0.5 1.11785 0.5 0.988337C0.5 0.858822 0.55145 0.734611 0.643031 0.64303C0.734611 0.55145 0.858822 0.5 0.988337 0.5C1.11785 0.5 1.24206 0.55145 1.33364 0.64303L10.3569 9.6663C10.4252 9.73459 10.4717 9.8216 10.4906 9.91633C10.5094 10.0111 10.4998 10.1092 10.4628 10.1985C10.4258 10.2877 10.3632 10.364 10.2829 10.4176C10.2026 10.4713 10.1082 10.4999 10.0116 10.4999Z" fill="#1D1D1D"/>
+              </svg>
+            </button>
+          </div>
+        `;
+        
+        // metadata 的值是 HTML 字符串，需要提取出 .details 部分，然后组合头部
+        // 如果 content 中包含 .details，只取 .details 的内容；否则使用整个 content
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = content;
+        const detailsContent = tempDiv.querySelector('.details')?.innerHTML || content;
+        
+        // 组合头部和内容
+        sidebarInfoElement.innerHTML = headerHTML + `<div class="details">${detailsContent}</div>`;
+        
+        // 重新绑定关闭按钮事件
+        bindCloseEvents();
+      }
+    }
+
+    // 绑定关闭事件（复用函数）
+    function bindCloseEvents() {
+      const sidebarInfoElement = document.querySelector('.prd-sidebar-info');
+      if (!sidebarInfoElement) return;
+      
+      // 绑定关闭按钮事件
+      const closeBtn = sidebarInfoElement.querySelector('.close-prd-sidebar');
+      if (closeBtn) {
+        closeBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          closeSidebar();
+        });
+      }
+      
+      // 重新绑定 overlay 点击关闭事件
+      const overlay = document.querySelector('.prd-sidebar-overlay');
+      if (overlay) {
+        overlay.addEventListener('click', (e) => {
+          e.preventDefault();
+          closeSidebar();
+        });
+      }
+    }
+
+    // 渲染分类和标签
+    function renderCategoriesAndTags(
+      categories: CategoryData[],
+      tags: TagData[],
+      locale: string
+    ) {
+      // TODO: 渲染分类和标签
+      console.log('Categories:', categories);
+      console.log('Tags:', tags);
+    }
+
+    // 初始化产品交互
+    function initProductInteractions(data: {
+      articleMain: ArticleMainData;
+      variants: ArticleVariantsData;
+      discountRules: DiscountRulesData;
+      shippingTemplates: ShippingTemplateData[];
+      taxTemplates: TaxTemplateData[];
+      regionsData: RegionsData | null;
+      userProfile: UserProfileData | null;
+      groupBuyingData: GroupBuyingData | null;
+      crowdfundingData: CrowdfundingData | null;
+      config: ReturnType<typeof getGlobalConfig>;
+    }) {
+      // 初始化数量选择器的交互
+      initQuantitySelector();
+      
+      // 初始化地址选择和运费税费计算
+      initShippingTaxSummary(data);
+      
+      // 初始化添加到购物车按钮
+      initAddToCartButton();
+
+      initWishlistButton();
+      
+      console.log('Product interactions initialized');
+    }
+
+    // 初始化添加到购物车按钮
+    function initAddToCartButton() {
+      // 使用ID选择器，更精确
+      const addToCartBtn = document.getElementById('add-to-cart-btn');
+      if (!addToCartBtn) {
+        console.warn('Add to cart button not found');
+        return;
+      }
+
+      console.log('Add to cart button found, binding click event');
+
+      // 绑定点击事件（使用once: false确保可以多次触发）
+      addToCartBtn.addEventListener('click', function(e: Event) {
+        e.preventDefault();
+        e.stopPropagation(); // 阻止事件冒泡
+        console.log('Add to cart button clicked');
+        void handleAddToCart();
+      }, false);
+    }
+
+    /** 愿望清单：与 list01 共用 localStorage wishlist_product_ids */
+    function initWishlistButton() {
+      const btnEl = document.getElementById('product-wishlist-btn');
+      if (!(btnEl instanceof HTMLAnchorElement)) {
+        return;
+      }
+      const btn = btnEl;
+      const productId = btn.dataset.productId ?? getArticleId() ?? '';
+      if (!productId) {
+        return;
+      }
+
+      const labelEl = document.getElementById('product-wishlist-label');
+
+      function syncWishlistUi() {
+        const on = isInWishlist(productId);
+        btn.style.color = on ? '#dc3545' : '';
+        if (labelEl) {
+          labelEl.textContent = on
+            ? clientTranslations.get('remove_from_wishlist')
+            : clientTranslations.get('add_to_wishlist');
+        }
+      }
+
+      syncWishlistUi();
+
+      btn.addEventListener('click', (e: Event) => {
+        e.preventDefault();
+        toggleWishlist(productId);
+        syncWishlistUi();
+      });
+    }
+
+    // 处理添加到购物车
+    async function handleAddToCart() {
+      console.log('=== 添加到购物车 ===');
+
+      if (!isAuthenticated()) {
+        alert(clientTranslations.get('please_login_first'));
+        return;
+      }
+
+      // 1. 验证没有错误状态
+      if (hasShippingTaxError()) {
+        const errorState = getShippingTaxErrorState();
+        console.error('无法添加到购物车，运费税费计算有错误:', errorState);
+        alert(errorState.message || '运费和税费计算有错误，请先解决后再添加购物车');
+        return;
+      }
+
+      // 2. 验证必要数据
+      if (!globalProductData || !currentPriceInfo) {
+        console.error('产品数据或价格信息未初始化');
+        alert('产品数据未加载完成，请稍后再试');
+        return;
+      }
+
+      const { articleMain, articleContent, config } = globalProductData;
+      const quantity = getCurrentQuantity();
+
+      if (
+        selectedGroupBuying &&
+        !matchesGroupBuyingUserRestrictions(selectedGroupBuying, getDiscountViewerContext())
+      ) {
+        alert(clientTranslations.get('group_buying_not_eligible'));
+        return;
+      }
+
+      if (
+        selectedCrowdfunding &&
+        !matchesCrowdfundingUserRestrictions(selectedCrowdfunding, getDiscountViewerContext())
+      ) {
+        alert(clientTranslations.get('crowdfunding_not_eligible'));
+        return;
+      }
+
+      // 3. 验证数量小于库存
+      let availableStock: number | null = null; // null 表示无限库存
+      if (selectedGroupBuying) {
+        // 如果已选择团购，使用团购库存
+        // 如果总库存不存在，表示库存无限，不需要检查
+        if (selectedGroupBuying.inventory_config.total_inventory === null || 
+            selectedGroupBuying.inventory_config.total_inventory === undefined) {
+          // 总库存不存在，表示无限库存，跳过库存检查
+          availableStock = null;
+        } else {
+          // 总库存存在，使用可用库存
+          availableStock = selectedGroupBuying.inventory_config.available_inventory ?? 0;
+        }
+      } else if (currentVariant) {
+        // 使用变体库存
+        availableStock = currentVariant.inventory?.available_quantity || 0;
+      } else {
+        // 使用产品主数据库存
+        availableStock = parseInt(
+          articleMain.data.article.metadata.template_fields["in stock"] || '0'
+        );
+      }
+
+      // 只有当库存不为null（即不是无限库存）时才进行库存检查
+      if (availableStock !== null && quantity > availableStock) {
+        console.error(`数量 ${quantity} 超过库存 ${availableStock}`);
+        alert(`数量不能超过库存（当前库存：${availableStock}）`);
+        return;
+      }
+
+      // 4. 获取选择的属性
+      const selectedAttributes = getSelectedAttributes();
+      const selectedAttributesMap: { [key: string]: string } = {};
+      Object.keys(selectedAttributes).forEach(attrId => {
+        selectedAttributesMap[attrId] = selectedAttributes[attrId];
+      });
+
+      // 5. 获取产品图片URL（使用第一个图片作为缩略图）
+      const images = articleMain.data.article.metadata.template_fields["Showcase Gallery"] || [];
+      const productImageUrl = images.length > 0 ? images[0] : '';
+
+      // 6. 获取所有应用的折扣规则ID数组（支持折上折）
+      const discountRuleIds = currentPriceInfo.discountResult?.appliedDiscounts?.map(
+        (detail: AppliedDiscountDetail) => detail.discount?.id
+      ).filter((id: string | undefined): id is string => !!id) || undefined;
+
+      // 7. 判断当前货币是否是基础货币，如果不是则转换金额为基础货币
+      const isBaseCurrency = config.defaultCurrency && config.currentCurrency && 
+        (config.currentCurrency.is_base_currency || 
+         config.currentCurrency.currency_code === config.defaultCurrency.currency_code);
+      
+      // 如果当前货币不是基础货币，需要将所有金额转换为基础货币（除以汇率）
+      // exchangeRate 是从基础货币到当前货币的汇率，所以反向转换需要除以汇率
+      const rawExchangeRate = config.exchangeRate || 1;
+      const exchangeRateToBase = isBaseCurrency ? 1 : (rawExchangeRate > 0 ? rawExchangeRate : 1);
+      
+      const convertToBaseCurrency = (amount: number): number => {
+        if (isBaseCurrency || exchangeRateToBase === 1) {
+          return amount;
+        }
+        return amount / exchangeRateToBase;
+      };
+
+      // 转换所有金额字段为基础货币
+      const unitPriceInBase = convertToBaseCurrency(currentPriceInfo.discountedPrice);
+      const originalUnitPriceInBase = convertToBaseCurrency(currentPriceInfo.originalPrice);
+      const discountAmountInBase = convertToBaseCurrency(currentPriceInfo.discountAmount);
+      const shippingFeeInBase = convertToBaseCurrency(currentShippingTaxInfo?.shippingFee || 0);
+      const taxFeeInBase = convertToBaseCurrency(currentShippingTaxInfo?.taxFee || 0);
+
+      console.log('=== 货币转换调试 ===');
+      console.log('当前货币:', config.currentCurrency?.currency_code);
+      console.log('基础货币:', config.defaultCurrency?.currency_code);
+      console.log('是否为基础货币:', isBaseCurrency);
+      console.log('汇率（基础→当前）:', config.exchangeRate);
+      console.log('转换后单价（基础货币）:', unitPriceInBase, '原值（当前货币）:', currentPriceInfo.discountedPrice);
+
+      // currency_code 必须与静态 JSON 一致：有变体时用 variant.pricing.currency（服务端校验与此比对）；
+      // 无变体时用店铺基础货币（与后端无变体分支一致）。
+      const currencyCodeForCart =
+        (currentVariant?.pricing?.currency && String(currentVariant.pricing.currency).trim()) ||
+        config.defaultCurrency?.currency_code ||
+        config.currentCurrency?.currency_code ||
+        'USD';
+      console.log('提交 currency_code:', currencyCodeForCart);
+
+      // 8. 构建购物车项数据（所有金额字段使用基础货币）
+      const cartItemData: Omit<import('../../lib/cart.js').CartItem, 'id' | 'added_at'> = {
+        article_id: articleMain.data.article.id,
+        variant_id: currentVariant?.id,
+        selected_attributes: Object.keys(selectedAttributesMap).length > 0 ? selectedAttributesMap : undefined,
+        quantity: quantity,
+        unit_price: unitPriceInBase,
+        original_unit_price: originalUnitPriceInBase,
+        discount_amount: discountAmountInBase,
+        shipping_fee: shippingFeeInBase,
+        tax_fee: taxFeeInBase,
+        shipping_address_id: selectedAddress?.id,
+        shipping_template_id: currentShippingTaxInfo?.shippingTemplateId,
+        tax_template_id: currentShippingTaxInfo?.taxTemplateId,
+        // 额外字段
+        article_type: articleMain.data.article.article_type,
+        product_name: articleContent.data.title || '',
+        product_sku: currentVariant?.sku,
+        product_image_url: productImageUrl,
+        discount_rule_ids: discountRuleIds,
+        currency_code: currencyCodeForCart,
+        group_buying_id: selectedGroupBuying?.id, // 如果参加了团购，包含团购活动ID
+        crowdfunding_activity_id: selectedCrowdfunding?.id, // 如果参加了众筹，包含众筹活动ID
+        crowdfunding_reward_id: matchedCrowdfundingReward?.id, // 如果参加了众筹，包含回报档位ID
+      };
+
+      // 9. 提交到服务端购物车（服务端重算单价/运费/税/库存；成功后 GET /cart 全量同步本地）
+      try {
+        await postAddCartItem(cartItemData);
+        await syncLocalCartFromServer();
+        alert('已添加到购物车');
+
+        if (typeof (window as any).updateCartCount === 'function') {
+          (window as any).updateCartCount();
+        }
+
+        if (typeof (window as any).renderMinicart === 'function') {
+          (window as any).renderMinicart();
+        }
+      } catch (error) {
+        console.error('添加到购物车失败:', error);
+        const msg = error instanceof Error ? error.message : '添加到购物车失败，请稍后再试';
+        alert(msg);
+      }
+    }
+
+    // 获取运费模板的显示名称（支持多语言）
+    function getShippingTemplateDisplayName(template: ShippingTemplateData, locale: string): string {
+      if (!template || !template.data || !template.data.template) {
+        return '';
+      }
+
+      // 根据文档，translations 在 data.translations 下
+      // 如果指定了语言，查找翻译
+      if (locale && template.data.translations && template.data.translations.length > 0) {
+        const translation = template.data.translations.find(t => t.language_code === locale);
+        if (translation && (translation as any).template_name) {
+          return (translation as any).template_name;
+        }
+      }
+
+      // 返回默认模板名称
+      return template.data.template.template_name || '';
+    }
+
+    // 初始化运费模板选择器（提前定义，供initShippingTaxSummary调用）
+    function initShippingTemplateSelector(shippingTemplates: ShippingTemplateData[], config: ReturnType<typeof getGlobalConfig>) {
+      const templateSelector = document.getElementById('shipping-template-selector');
+      const templateSelectEl = document.getElementById('shipping-template-select');
+
+      if (!templateSelector || !(templateSelectEl instanceof HTMLSelectElement)) {
+        return;
+      }
+      const templateSelect = templateSelectEl;
+
+      // 显示选择器（注意：它已经被包装在 shipping-details-collapsible 中）
+      // 不需要单独控制显示/隐藏，由父容器的折叠状态控制
+      templateSelector.style.display = 'block';
+
+      // 清空选项
+      templateSelect.innerHTML = '';
+
+      // 添加模板选项
+      shippingTemplates.forEach((template, index) => {
+        const option = document.createElement('option');
+        option.value = index.toString();
+        const displayName = getShippingTemplateDisplayName(template, config.locale);
+        option.textContent = displayName || `模板 ${index + 1}`;
+        if (index === 0) {
+          option.selected = true;
+          selectedShippingTemplateIndex = 0;
+        }
+        templateSelect.appendChild(option);
+      });
+
+      // 监听模板选择变化
+      templateSelect.addEventListener('change', (e) => {
+        const selectedIndex = parseInt((e.target as HTMLSelectElement).value, 10);
+        if (!isNaN(selectedIndex) && selectedIndex >= 0 && selectedIndex < shippingTemplates.length) {
+          selectedShippingTemplateIndex = selectedIndex;
+          // 重新计算运费和税费
+          if (selectedAddress && globalProductData) {
+            calculateShippingAndTax();
+          }
+        }
+      });
+
+      // 绑定"查看运费规则"链接点击事件
+      const viewRuleLink = document.getElementById('view-shipping-rule-link');
+      if (viewRuleLink) {
+        viewRuleLink.addEventListener('click', (e) => {
+          e.preventDefault();
+          handleViewShippingRule(config.locale);
+        });
+      }
+    }
+
+    // 处理查看运费规则
+    function handleViewShippingRule(locale: string) {
+      if (!globalProductData || !selectedAddress) {
+        // 如果没有地址，提示用户
+        alert(clientTranslations.get('select_shipping_address'));
+        return;
+      }
+
+      const { shippingTemplates, regionsData } = globalProductData;
+      
+      // 获取当前选中的运费模板
+      const shippingTemplate = shippingTemplates[selectedShippingTemplateIndex];
+      if (!shippingTemplate || !regionsData || !regionsData.data) {
+        return;
+      }
+
+      // 查找匹配的运费规则
+      const matchedRule = clientShipping.findMatchingShippingRule(
+        shippingTemplate.data.rules,
+        selectedAddress.region_id,
+        regionsData.data.regions
+      );
+
+      if (!matchedRule) {
+        // 没有匹配的规则，显示提示
+        const modal = document.getElementById('shipping-rule-modal');
+        const overlay = document.getElementById('shipping-rule-modal-overlay');
+        const modalTitle = document.getElementById('shipping-rule-modal-title');
+        const modalContent = document.getElementById('shipping-rule-modal-content');
+        
+        if (modal && overlay && modalTitle && modalContent) {
+          modalTitle.textContent = clientTranslations.get('shipping_template');
+          modalContent.innerHTML = `<p class="text-muted">${clientTranslations.get('no_matching_shipping_rule')}</p>`;
+          modal.style.display = 'block';
+          overlay.style.display = 'block';
+          bindShippingRuleModalCloseEvents();
+        }
+        return;
+      }
+
+      // 有匹配的规则，显示规则详情
+      openShippingRuleModal(matchedRule, shippingTemplate, locale);
+    }
+
+    // 打开运费规则详情弹窗
+    function openShippingRuleModal(
+      rule: import('../../lib/product.js').ShippingRule,
+      template: ShippingTemplateData,
+      locale: string
+    ) {
+      const modal = document.getElementById('shipping-rule-modal');
+      const overlay = document.getElementById('shipping-rule-modal-overlay');
+      const modalTitle = document.getElementById('shipping-rule-modal-title');
+      const modalContent = document.getElementById('shipping-rule-modal-content');
+      
+      if (!modal || !overlay || !modalTitle || !modalContent) {
+        return;
+      }
+
+      // 设置标题
+      modalTitle.textContent = rule.rule_name || clientTranslations.get('shipping_template');
+
+      // 生成内容
+      modalContent.innerHTML = generateShippingRuleModalContent(rule, template, locale);
+
+      // 显示弹窗
+      modal.style.display = 'block';
+      overlay.style.display = 'block';
+
+      // 绑定关闭事件
+      bindShippingRuleModalCloseEvents();
+    }
+
+    // 生成运费规则详情内容
+    function generateShippingRuleModalContent(
+      rule: import('../../lib/product.js').ShippingRule,
+      template: ShippingTemplateData,
+      locale: string
+    ): string {
+      let html = '';
+
+      // 规则类型说明（使用国际化）
+      const ruleTypeMap: Record<string, string> = {
+        'quantity': clientTranslations.get('shipping_rule_type_quantity'),
+        'volume': clientTranslations.get('shipping_rule_type_volume'),
+        'weight': clientTranslations.get('shipping_rule_type_weight'),
+        'amount': clientTranslations.get('shipping_rule_type_amount'),
+        'fixed': clientTranslations.get('shipping_rule_type_fixed'),
+      };
+      const ruleTypeName = ruleTypeMap[rule.rule_type] || rule.rule_type;
+
+      // 基础信息
+      html += `<div class="mb-3">`;
+      html += `<p class="mb-2"><strong>${clientTranslations.get('shipping_rule_name')}</strong>${rule.rule_name || ''}</p>`;
+      html += `<p class="mb-2"><strong>${clientTranslations.get('shipping_rule_type')}</strong>${ruleTypeName}</p>`;
+      html += `<p class="mb-2"><strong>${clientTranslations.get('shipping_base_price')}</strong>${rule.base_price || 0}</p>`;
+      html += `</div>`;
+
+      // 根据规则类型显示详细信息
+      if (rule.rule_type !== 'fixed') {
+        html += `<div class="mb-3">`;
+        html += `<p class="mb-2"><strong>${clientTranslations.get('shipping_unit_price')}</strong>${rule.unit_price || 0}</p>`;
+        
+        if (rule.min_value !== undefined && rule.min_value !== null) {
+          html += `<p class="mb-2"><strong>${clientTranslations.get('shipping_min_value')}</strong>${rule.min_value}</p>`;
+        }
+        
+        if (rule.unit_increment !== undefined && rule.unit_increment !== null) {
+          html += `<p class="mb-2"><strong>${clientTranslations.get('shipping_unit_increment')}</strong>${rule.unit_increment}</p>`;
+        }
+        
+        html += `</div>`;
+      }
+
+      // 运费计算公式说明（使用国际化）
+      html += `<div class="mb-3">`;
+      html += `<p class="mb-1"><strong>${clientTranslations.get('shipping_calculation')}</strong></p>`;
+      
+      let formulaText = '';
+      switch (rule.rule_type) {
+        case 'quantity':
+          formulaText = clientTranslations.get('shipping_formula_quantity')
+            .replace('{basePrice}', String(rule.base_price || 0))
+            .replace('{unitPrice}', String(rule.unit_price || 0));
+          break;
+        case 'volume':
+          formulaText = clientTranslations.get('shipping_formula_volume')
+            .replace('{basePrice}', String(rule.base_price || 0))
+            .replace('{minValue}', String(rule.min_value || 0))
+            .replace('{unitPrice}', String(rule.unit_price || 0));
+          break;
+        case 'weight':
+          formulaText = clientTranslations.get('shipping_formula_weight')
+            .replace('{basePrice}', String(rule.base_price || 0))
+            .replace('{minValue}', String(rule.min_value || 0))
+            .replace('{unitPrice}', String(rule.unit_price || 0));
+          break;
+        case 'amount':
+          formulaText = clientTranslations.get('shipping_formula_amount')
+            .replace('{basePrice}', String(rule.base_price || 0))
+            .replace('{minValue}', String(rule.min_value || 0))
+            .replace('{unitPrice}', String(rule.unit_price || 0));
+          break;
+        case 'fixed':
+          formulaText = clientTranslations.get('shipping_formula_fixed')
+            .replace('{basePrice}', String(rule.base_price || 0));
+          break;
+        default:
+          formulaText = clientTranslations.get('shipping_formula_default')
+            .replace('{basePrice}', String(rule.base_price || 0));
+      }
+      html += `<p class="mb-0 text-muted">${formulaText}</p>`;
+      html += `</div>`;
+
+      // 区域信息（如果globalProductData中有regionsData）
+      if (globalProductData && globalProductData.regionsData && globalProductData.regionsData.data) {
+        const regionName = clientShipping.getRegionName(
+          rule.region_id,
+          globalProductData.regionsData.data.regions,
+          locale
+        );
+        if (regionName) {
+          html += `<div class="mb-3">`;
+          html += `<p class="mb-0"><strong>${clientTranslations.get('shipping_applicable_region')}</strong>${regionName}</p>`;
+          html += `</div>`;
+        }
+      }
+
+      // 状态（使用国际化）
+      html += `<div class="mb-3">`;
+      const statusText = rule.status === 'active' 
+        ? clientTranslations.get('shipping_status_active')
+        : clientTranslations.get('shipping_status_inactive');
+      html += `<p class="mb-0"><strong>${clientTranslations.get('shipping_rule_status')}</strong>${statusText}</p>`;
+      html += `</div>`;
+
+      return html;
+    }
+
+    // 绑定运费规则弹窗关闭事件
+    function bindShippingRuleModalCloseEvents() {
+      const modal = document.getElementById('shipping-rule-modal');
+      const overlay = document.getElementById('shipping-rule-modal-overlay');
+      const closeBtn = document.getElementById('shipping-rule-modal-close');
+      
+      const closeModal = () => {
+        if (modal) {
+          modal.style.display = 'none';
+        }
+        if (overlay) {
+          overlay.style.display = 'none';
+        }
+      };
+
+      if (closeBtn) {
+        closeBtn.onclick = closeModal;
+      }
+      
+      if (overlay) {
+        overlay.onclick = closeModal;
+      }
+    }
+
+    // 初始化运费和税费摘要
+    function initShippingTaxSummary(data: {
+      articleMain: ArticleMainData;
+      shippingTemplates: ShippingTemplateData[];
+      taxTemplates: TaxTemplateData[];
+      regionsData: RegionsData | null;
+      userProfile: UserProfileData | null;
+      config: ReturnType<typeof getGlobalConfig>;
+    }) {
+      const { shippingTemplates, taxTemplates, regionsData, userProfile, config } = data;
+
+      // 显示运费税费摘要区域
+      const summaryContainer = document.getElementById('shipping-tax-summary');
+      if (!summaryContainer) {
+        return;
+      }
+      summaryContainer.style.display = 'block';
+
+      // 检查是否有运费模板和税费模板
+      if (!shippingTemplates || shippingTemplates.length === 0) {
+        const errorMessage = clientTranslations.get('no_shipping_templates');
+        setShippingTaxError('NO_SHIPPING_TEMPLATE', errorMessage);
+        const errorElement = document.getElementById('shipping-tax-error');
+        const errorMsgElement = document.getElementById('error-message');
+        if (errorElement && errorMsgElement) {
+          errorMsgElement.textContent = errorMessage;
+          errorElement.style.display = 'block';
+        }
+        return;
+      }
+
+      if (!taxTemplates || taxTemplates.length === 0) {
+        const errorMessage = clientTranslations.get('no_tax_templates');
+        setShippingTaxError('NO_TAX_TEMPLATE', errorMessage);
+        const errorElement = document.getElementById('shipping-tax-error');
+        const errorMsgElement = document.getElementById('error-message');
+        if (errorElement && errorMsgElement) {
+          errorMsgElement.textContent = errorMessage;
+          errorElement.style.display = 'block';
+        }
+        return;
+      }
+
+      // 初始化地址选择器
+      if (userProfile && userProfile.data.addresses && userProfile.data.addresses.length > 0) {
+        // 有地址，显示地址选择器
+        initAddressSelector(userProfile.data.addresses, config);
+      } else {
+        // 没有地址，显示提示
+        showAddressPrompt(config);
+      }
+
+      // 初始化运费模板选择器（只要有模板就显示）
+      if (shippingTemplates.length > 0) {
+        initShippingTemplateSelector(shippingTemplates, config);
+      }
+
+      // 更新多语言文本（不含 address-prompt-text，由 syncAddressPromptCopy 按登录态设置）
+      updateShippingTaxTranslations(config.locale);
+      syncAddressPromptCopy();
+    }
+
+    /** 运费区块顶部提示：未登录与已登录无地址的文案不同，且不能被 updateShippingTaxTranslations 覆盖成「请选择地址」 */
+    function syncAddressPromptCopy() {
+      const addressPrompt = document.getElementById('address-prompt');
+      const promptText = document.getElementById('address-prompt-text');
+      const loginBtn = document.getElementById('shipping-tax-login-btn');
+      const addAddressBtn = document.getElementById('select-address-btn');
+      if (!addressPrompt || !promptText) {
+        return;
+      }
+      if (addressPrompt.style.display === 'none') {
+        return;
+      }
+      if (!isAuthenticated()) {
+        const msg = clientTranslations.get('shipping_tax_login_required');
+        promptText.textContent = msg;
+        setShippingTaxError('NOT_LOGGED_IN', msg);
+        if (loginBtn) {
+          loginBtn.style.display = 'inline-block';
+        }
+        if (addAddressBtn) {
+          addAddressBtn.style.display = 'none';
+        }
+        return;
+      }
+      const msg = clientTranslations.get('select_shipping_address');
+      promptText.textContent = msg;
+      setShippingTaxError('NO_ADDRESS', msg);
+      if (loginBtn) {
+        loginBtn.style.display = 'none';
+      }
+      if (addAddressBtn) {
+        addAddressBtn.style.display = 'inline-block';
+      }
+    }
+
+    // 初始化地址选择器
+    function initAddressSelector(addresses: Address[], config: ReturnType<typeof getGlobalConfig>) {
+      const addressSelector = document.getElementById('address-selector');
+      const addressSelectEl = document.getElementById('shipping-address-select');
+      const addressPrompt = document.getElementById('address-prompt');
+      const addressLabel = document.getElementById('shipping-address-label');
+      const detailsCollapsible = document.getElementById('shipping-details-collapsible');
+      const summaryCollapsible = document.getElementById('summary-details-collapsible');
+      const toggleIcon = document.getElementById('shipping-address-toggle-icon');
+
+      if (!addressSelector || !(addressSelectEl instanceof HTMLSelectElement)) {
+        return;
+      }
+      const addressSelect = addressSelectEl;
+
+      // 隐藏提示
+      if (addressPrompt) {
+        addressPrompt.style.display = 'none';
+      }
+
+      // 显示选择器（但默认收起内容）
+      addressSelector.style.display = 'block';
+
+      // 初始化折叠/展开状态（默认收起）
+      let isExpanded = false;
+
+      // 折叠/展开函数
+      function toggleExpand() {
+        isExpanded = !isExpanded;
+        
+        if (detailsCollapsible) {
+          detailsCollapsible.style.display = isExpanded ? 'block' : 'none';
+        }
+        if (summaryCollapsible) {
+          summaryCollapsible.style.display = isExpanded ? 'block' : 'none';
+        }
+        
+        // 旋转图标（收起时-90度，展开时0度）
+        if (toggleIcon) {
+          toggleIcon.style.transform = isExpanded ? 'rotate(0deg)' : 'rotate(-90deg)';
+        }
+      }
+
+      // 绑定点击事件到标签
+      if (addressLabel) {
+        addressLabel.addEventListener('click', toggleExpand);
+      }
+
+      // 清空选项
+      addressSelect.innerHTML = '';
+      
+      // 添加默认选项
+      const defaultOption = document.createElement('option');
+      defaultOption.value = '';
+      defaultOption.textContent = clientTranslations.get('please_select_address');
+      addressSelect.appendChild(defaultOption);
+
+      // 添加地址选项
+      addresses.forEach(address => {
+        const option = document.createElement('option');
+        option.value = address.id;
+        option.textContent = `${address.address_name} - ${address.address_line1}`;
+        if (address.is_default) {
+          option.selected = true;
+          // 设置默认地址
+          selectedAddress = address;
+        }
+        addressSelect.appendChild(option);
+      });
+
+      // 监听地址选择变化
+      addressSelect.addEventListener('change', (e) => {
+        const selectedAddressId = (e.target as HTMLSelectElement).value;
+        if (selectedAddressId) {
+          const address = addresses.find(addr => addr.id === selectedAddressId);
+          if (address) {
+            selectedAddress = address;
+            // 有地址时，清除地址选择错误
+            clearShippingTaxError();
+            // 重新计算运费和税费
+            calculateShippingAndTax();
+          }
+        } else {
+          selectedAddress = null;
+          // 取消选择地址，设置错误状态
+          const errorMessage = clientTranslations.get('select_shipping_address');
+          setShippingTaxError('NO_ADDRESS', errorMessage);
+          hideShippingTaxSummary();
+        }
+      });
+
+      // 如果已选择默认地址，立即计算运费和税费
+      if (selectedAddress) {
+        // 有地址时，清除地址选择错误
+        clearShippingTaxError();
+        calculateShippingAndTax();
+      } else {
+        // 没有选择地址，设置错误状态
+        const errorMessage = clientTranslations.get('select_shipping_address');
+        setShippingTaxError('NO_ADDRESS', errorMessage);
+      }
+    }
+
+    // 显示地址提示（文案与登录/添加地址按钮由 syncAddressPromptCopy 设置）
+    function showAddressPrompt(_config: ReturnType<typeof getGlobalConfig>) {
+      const addressPrompt = document.getElementById('address-prompt');
+      const addressSelector = document.getElementById('address-selector');
+
+      if (addressPrompt) {
+        if (addressSelector) {
+          addressSelector.style.display = 'none';
+        }
+        addressPrompt.style.display = 'block';
+      }
+    }
+
+    // 更新运费税费的多语言文本
+    function updateShippingTaxTranslations(locale: string) {
+      const elements: { id: string; key: string }[] = [
+        { id: 'shipping-tax-login-btn-text', key: 'account_menu_login' },
+        { id: 'select-address-btn-text', key: 'add_address' },
+        { id: 'shipping-address-label', key: 'shipping_address' },
+        { id: 'please-select-address-option', key: 'please_select_address' },
+        { id: 'shipping-template-label', key: 'shipping_template' },
+        { id: 'please-select-template-option', key: 'please_select_template' },
+        { id: 'subtotal-label', key: 'subtotal' },
+        { id: 'shipping-label', key: 'shipping' },
+        { id: 'tax-label', key: 'tax' },
+        { id: 'total-label', key: 'total' },
+      ];
+
+      elements.forEach(({ id, key }) => {
+        const element = document.getElementById(id);
+        if (element && id === 'shipping-template-label') {
+          // shipping-template-label 需要特殊处理，因为它包含链接
+          const labelSpan = element.querySelector('span:first-child');
+          if (labelSpan) {
+            labelSpan.textContent = clientTranslations.get(key as any);
+          } else {
+            // 如果没有span，直接设置（保留链接）
+            const link = element.querySelector('a');
+            const text = clientTranslations.get(key as any);
+            if (link) {
+              element.innerHTML = `<span>${text}</span>${link.outerHTML}`;
+            } else {
+              element.textContent = text;
+            }
+          }
+        } else if (element) {
+          element.textContent = clientTranslations.get(key as any);
+        }
+      });
+
+      // 更新"查看运费规则"链接文本
+      const viewRuleLink = document.getElementById('view-shipping-rule-link');
+      if (viewRuleLink) {
+        viewRuleLink.textContent = clientTranslations.get('view_shipping_rule');
+      }
+    }
+
+    // 初始化数量选择器（监听数量变化，重新计算价格）
+    function initQuantitySelector() {
+      const quantityInput = document.querySelector('.quantity-num, .qty-input') as HTMLInputElement;
+      const minusBtn = document.querySelector('.quantity-arrow-minus, .qty-left-minus');
+      const plusBtn = document.querySelector('.quantity-arrow-plus, .qty-right-plus');
+
+      if (!quantityInput) {
+        return;
+      }
+
+      // 确保初始值为1（因为HTML中value="1"）
+      // 延迟设置，避免与jQuery冲突
+      setTimeout(() => {
+        quantityInput.value = '1';
+        console.log('初始化数量输入框值为:', quantityInput.value);
+      }, 100);
+
+      // 数量变化时重新计算价格
+      const handleQuantityChange = () => {
+        console.log('=== 数量变化触发价格重新计算 ===');
+        console.log('当前数量输入框值:', quantityInput.value);
+        
+        if (!globalProductData) {
+          console.log('globalProductData 未初始化，跳过价格计算');
+          return;
+        }
+
+        // 使用 updatePriceAndStock 统一处理价格和库存更新（会自动检查团购状态）
+        updatePriceAndStock(currentVariant);
+      };
+
+      // 存储上一次的值，用于检测变化
+      let lastValue = quantityInput.value;
+
+      // 使用setInterval定期检查值的变化（因为jQuery可能直接修改value而不触发事件）
+      const checkInterval = setInterval(() => {
+        if (quantityInput.value !== lastValue) {
+          console.log('检测到数量变化（通过轮询）:', lastValue, '->', quantityInput.value);
+          lastValue = quantityInput.value;
+          handleQuantityChange();
+        }
+      }, 100);
+
+      // 监听输入框的原生事件
+      quantityInput.addEventListener('input', () => {
+        console.log('input事件触发');
+        lastValue = quantityInput.value;
+        handleQuantityChange();
+      });
+      
+      quantityInput.addEventListener('change', () => {
+        console.log('change事件触发');
+        lastValue = quantityInput.value;
+        handleQuantityChange();
+      });
+
+      // 监听减号按钮点击
+      if (minusBtn) {
+        minusBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          const current = parseInt(quantityInput.value, 10) || 1;
+          const next = Math.max(1, current - 1);
+          quantityInput.value = String(next);
+          lastValue = quantityInput.value;
+          handleQuantityChange();
+        });
+      }
+
+      // 监听加号按钮点击
+      if (plusBtn) {
+        plusBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          const current = parseInt(quantityInput.value, 10) || 1;
+          const next = current + 1;
+          quantityInput.value = String(next);
+          lastValue = quantityInput.value;
+          handleQuantityChange();
+        });
+      }
+
+      // 页面卸载时清理定时器
+      window.addEventListener('beforeunload', () => {
+        clearInterval(checkInterval);
+      });
+    }
+
+    // 页面加载完成后执行
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => {
+        const articleId = getArticleId();
+        if (articleId) {
+          loadProductData(articleId);
+        } else {
+          console.error('Article ID not found');
+        }
+      });
+    } else {
+      const articleId = getArticleId();
+      if (articleId) {
+        loadProductData(articleId);
+      } else {
+        console.error('Article ID not found');
+      }
+    }
+  })();
+</script>

@@ -1,0 +1,111 @@
+---
+import type { ArticleDetailViewModel } from '../../lib/articleDetail';
+
+interface Props {
+  view: ArticleDetailViewModel;
+}
+
+const { view } = Astro.props;
+const hasTaxonomy = view.tags.length > 0 || view.categories.length > 0;
+---
+
+<section class="article-detail-section bg-background-1 pb-14 md:pb-20 lg:pb-24 dark:bg-background-8">
+  <div class="main-container">
+    <header class="mx-auto mb-8 max-w-[1050px] md:mb-10">
+      <h1 class="text-heading-4 md:text-heading-3 font-normal tracking-[-0.04em]">
+        {view.title}
+      </h1>
+      {
+        view.dateLine && (
+          <p class="text-tagline-2 mt-3 text-secondary/60 dark:text-accent/60">
+            {view.dateLine}
+          </p>
+        )
+      }
+    </header>
+
+    {
+      view.images.length > 0 && (
+        <figure class="mx-auto mb-10 max-w-[1100px] md:mb-14">
+          {
+            view.images.length === 1 ? (
+              <img
+                src={view.images[0]}
+                alt={view.title}
+                class="h-auto max-h-[630px] w-full rounded-lg object-cover"
+                loading="eager"
+              />
+            ) : (
+              <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {view.images.map((src, index) => (
+                  <a
+                    href={src}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="block overflow-hidden rounded-lg"
+                  >
+                    <img
+                      src={src}
+                      alt={`${view.title} ${index + 1}`}
+                      class="h-[280px] w-full object-cover transition-transform duration-500 hover:scale-[1.02] md:h-[360px]"
+                      loading={index === 0 ? 'eager' : 'lazy'}
+                    />
+                  </a>
+                ))}
+              </div>
+            )
+          }
+        </figure>
+      )
+    }
+
+    <article class="blog-details-markdown page-markdown-content__body mx-auto max-w-[1050px] overflow-x-auto rounded-[20px] border border-stroke-1 bg-background-1 p-6 shadow-1 md:p-10 dark:border-stroke-7 dark:bg-background-6">
+      {view.mainContentHtml && <div set:html={view.mainContentHtml} />}
+
+      {
+        view.metadataBlocks.map((block) => (
+          <div class="mt-6" set:html={block.html} />
+        ))
+      }
+
+      {
+        hasTaxonomy && (
+          <div class="mt-10 flex flex-col flex-wrap gap-4 border-t border-stroke-1 pt-8 sm:flex-row sm:items-center">
+            {
+              view.tags.length > 0 && (
+                <ul class="flex flex-wrap gap-2">
+                  {view.tags.map((tag) => (
+                    <li>
+                      <a
+                        href={tag.href}
+                        class="text-tagline-3 inline-block rounded-sm bg-background-3 px-3 py-1 text-secondary/60 transition-colors hover:bg-background-4 hover:text-secondary"
+                      >
+                        {tag.name}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )
+            }
+            {
+              view.categories.length > 0 && (
+                <ul class="flex flex-wrap gap-2">
+                  {view.categories.map((category) => (
+                    <li>
+                      <a
+                        href={category.href}
+                        class="text-tagline-3 inline-block rounded-full border border-stroke-1 px-3 py-1 text-secondary transition-colors hover:border-secondary/40"
+                      >
+                        {category.name}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )
+            }
+          </div>
+        )
+      }
+    </article>
+  </div>
+</section>

@@ -1,0 +1,44 @@
+---
+/**
+ * Markdown 区块：按当前语言拉取远程 md_url，GFM 解析后注入 html_url 壳。
+ * 组件记录 type=markdown 时渲染（旧租户仍可用 code=markdown / markdown01–99）。
+ */
+import {
+  loadMarkdownSectionTemplate,
+  resolveComponentsCss,
+  resolveMarkdownUrl,
+} from './resolvers/markdown';
+import { fetchRemoteMarkdown, renderMarkdownToHtml } from '../../lib/markdown';
+import { injectMarkdownContent } from '../../lib/markdownTemplate';
+import { missingTemplateNoticeHtml } from './resolvers/_shared';
+
+interface Props {
+  metadata: Record<string, unknown>;
+  locale: string;
+}
+
+const { metadata, locale } = Astro.props;
+const css = resolveComponentsCss(metadata, locale);
+const cssUrl = css.cssUrl;
+const mdUrl = resolveMarkdownUrl(metadata, locale);
+
+let html = '';
+try {
+  const templateShell = await loadMarkdownSectionTemplate(metadata, locale, Astro.url);
+  if (!templateShell) {
+    html = missingTemplateNoticeHtml(locale);
+  } else {
+    let contentHtml = '';
+    if (mdUrl) {
+      const markdown = await fetchRemoteMarkdown(mdUrl, Astro.url);
+      if (markdown) contentHtml = renderMarkdownToHtml(markdown);
+    }
+    html = injectMarkdownContent(templateShell, contentHtml);
+  }
+} catch (error) {
+  console.error('[markdown.astro] render failed:', error);
+}
+---
+
+<div class="markdown-section-slot markdown-section-slot--bare" data-markdown-section set:html={html} />
+{cssUrl && <link rel="stylesheet" href={cssUrl} />}

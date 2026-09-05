@@ -1,0 +1,56 @@
+---
+import type { MenuItem } from '../../../lib/menu';
+import {
+  activeMenuChildren,
+  getMenuItemLabel,
+  getMenuItemMobileLabel,
+  getMenuItemUrl,
+  menuPanelId,
+} from '../../../lib/headerMenu';
+import MobileMenuArrow from './MobileMenuArrow.astro';
+import MobileDropdownLinkL2 from './MobileDropdownLinkL2.astro';
+
+interface Props {
+  item: MenuItem;
+  locale: string;
+  defaultOpen?: boolean;
+}
+
+const { item, locale, defaultOpen = false } = Astro.props;
+const label = getMenuItemMobileLabel(item, locale) || getMenuItemLabel(item, locale);
+const href = getMenuItemUrl(item);
+const panelId = menuPanelId(item);
+const children = activeMenuChildren(item);
+const target = item.target && item.target !== '_self' ? item.target : undefined;
+---
+
+<li class="space-y-1">
+  <div class="mobile-menu-row flex items-center gap-1 pr-1" data-menu-row={panelId}>
+    <a
+      href={href}
+      target={target}
+      rel={target ? 'noopener noreferrer' : undefined}
+      class="mobile-menu-link font-sora text-tagline-2 text-secondary/90 hover:text-secondary block flex-1 py-2.5 text-left font-normal transition-colors duration-200"
+    >
+      {label}
+    </a>
+    <button
+      type="button"
+      class="mobile-menu-toggle text-secondary/70 hover:text-secondary hover:bg-secondary/5 flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-lg transition-colors"
+      data-menu={panelId}
+      data-selected={defaultOpen ? 'true' : undefined}
+      aria-expanded={defaultOpen ? 'true' : 'false'}
+      aria-label={`展开 ${label} 子菜单`}
+    >
+      <MobileMenuArrow />
+    </button>
+  </div>
+  <ul
+    class:list={['mobile-submenu space-y-0.5 pl-1', defaultOpen ? 'block' : 'hidden']}
+    data-submenu={panelId}
+  >
+    {children.map((child) => (
+      <MobileDropdownLinkL2 item={child} locale={locale} />
+    ))}
+  </ul>
+</li>

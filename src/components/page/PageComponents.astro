@@ -1,0 +1,28 @@
+---
+import type { PageComponentSlot } from '../../lib/pageComponents';
+import { sortPageComponentSlots } from '../../lib/pageComponents';
+import PageComponentSlotView from './PageComponentSlot.astro';
+
+interface Props {
+  slots: PageComponentSlot[];
+  locale: string;
+  pageCode: string;
+  articleId?: string;
+}
+
+const { slots, locale, pageCode, articleId } = Astro.props;
+const orderedSlots = sortPageComponentSlots(slots);
+---
+
+{
+  slots.length === 0 ? (
+    import.meta.env.DEV ? (
+      <div class="main-container py-8 text-center text-tagline-2 text-secondary/60">
+      </div>
+    ) : null
+  ) : (
+    orderedSlots.map((pageSlot) => (
+      <PageComponentSlotView pageSlot={pageSlot} locale={locale} pageCode={pageCode} articleId={articleId} />
+    ))
+  )
+}

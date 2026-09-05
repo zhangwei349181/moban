@@ -1,0 +1,56 @@
+---
+export const prerender = false;
+
+import ArticleDetailPage from '../components/page/ArticleDetailPage.astro';
+import ProductSingleDetailPage from '../components/page/ProductSingleDetailPage.astro';
+import { loadArticleDetailPageModel } from '../lib/articleDetailPage';
+import { loadProductSingleDetailPageModel } from '../lib/productSingleDetailPage';
+import { getCurrentLocale, getTenantId } from '../lib/i18n';
+import { normalizeDetailPageCode, resolveDetailKindFromPageType } from '../lib/detailPageRoute';
+import { fetchWebPagesIndex, findPageIndexItem } from '../lib/webPage';
+import { resolvePageType } from '../lib/pageType';
+
+/**
+ * 详情页入口：/{page_code}-{id}
+ * prefix 即 CMS page_code；用该页 type 分流（postsingle / productsingle）。
+ * UUID 中含 `-` 时 id 为首个 `-` 之后的整段。
+ */
+const rawPrefix = Astro.params.prefix ?? '';
+const rawId = Astro.params.id ?? '';
+const id = rawId.replace(/\.astro$/i, '').trim();
+const pageCode = normalizeDetailPageCode(rawPrefix);
+
+if (!pageCode || !id) {
+  return Astro.redirect('/404');
+}
+
+const locale = getCurrentLocale(Astro);
+const tenantId = getTenantId(Astro);
+const pagesIndex = await fetchWebPagesIndex(tenantId);
+const indexItem = findPageIndexItem(pagesIndex, pageCode);
+if (!indexItem) {
+  return Astro.redirect('/404');
+}
+
+const kind = resolveDetailKindFromPageType(resolvePageType(indexItem));
+if (!kind) {
+  return Astro.redirect('/404');
+}
+
+let articleModel: Awaited<ReturnType<typeof loadArticleDetailPageModel>> = null;
+let productModel: Awaited<ReturnType<typeof loadProductSingleDetailPageModel>> = null;
+
+if (kind === 'postsingle') {
+  articleModel = await loadArticleDetailPageModel(pageCode, id, locale, tenantId, Astro.url);
+  if (!articleModel) {
+    return Astro.redirect('/404');
+  }
+} else {
+  productModel = await loadProductSingleDetailPageModel(pageCode, id, locale, tenantId, Astro.url);
+  if (!productModel) {
+    return Astro.redirect('/404');
+  }
+}
+---
+
+{articleModel ? <ArticleDetailPage model={articleModel} /> : <ProductSingleDetailPage model={productModel!} />}

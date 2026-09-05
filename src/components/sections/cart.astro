@@ -1,0 +1,67 @@
+---
+/**
+ * 购物车区块：布局由 CMS html_url 定义，行项目由 cartUi.client 填充。
+ * 组件记录 type=cart 时渲染（旧租户仍可用 code=cart / shopcart / shoppingcart）。
+ */
+import { resolveCartSectionMeta, loadCartSectionTemplate } from './resolvers/cart';
+import { missingTemplateNoticeHtml } from './resolvers/_shared';
+import { renderCartSectionHtml } from '../../lib/cartTemplate';
+import { resolveCommerceClientInit } from '../../lib/commerceInit';
+
+interface Props {
+  metadata: Record<string, unknown>;
+  locale: string;
+}
+
+const { metadata, locale } = Astro.props;
+const sectionMeta = resolveCartSectionMeta(metadata, locale);
+const clientInit = resolveCommerceClientInit(metadata, locale);
+const cssUrl = clientInit.cssUrl;
+
+let html = '';
+try {
+  const templateShell = await loadCartSectionTemplate(metadata, locale, Astro.url);
+  html = templateShell
+    ? renderCartSectionHtml({
+        meta: sectionMeta,
+        templateShell,
+        clientConfig: {
+          checkoutUrl: sectionMeta.checkoutUrl,
+          continueShoppingUrl: sectionMeta.continueShoppingUrl,
+          productPageCode: sectionMeta.productPageCode,
+        },
+      })
+    : missingTemplateNoticeHtml(locale);
+} catch (error) {
+  console.error('[cart.astro] render failed:', error);
+}
+---
+
+<div
+  class="cart-section-slot cart-section-slot--bare"
+  data-cart-slot
+  data-use-platform-ui={clientInit.usePlatformUi ? '1' : '0'}
+  data-has-custom-init={clientInit.initScriptUrl || clientInit.initScriptInline ? '1' : '0'}
+  set:html={html}
+/>
+{cssUrl && <link rel="stylesheet" href={cssUrl} />}
+{clientInit.initScriptUrl && (
+  <script src={clientInit.initScriptUrl} data-cart-custom-init="url" />
+)}
+{clientInit.initScriptInline && (
+  <script is:inline data-cart-custom-init="inline">
+    {clientInit.initScriptInline}
+  </script>
+)}
+
+<script>
+  import { bootCart } from '../../lib/cartBoot.client';
+
+  function runBoot() {
+    const slot = document.querySelector('[data-cart-slot]');
+    const usePlatformUi = slot?.getAttribute('data-use-platform-ui') !== '0';
+    bootCart({ usePlatformUi });
+  }
+
+  runBoot();
+</script>

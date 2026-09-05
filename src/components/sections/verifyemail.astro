@@ -1,0 +1,83 @@
+---
+/**
+ * 邮箱验证区块：布局由 CMS html_url 定义，发码/确认由 verifyEmail.client 处理。
+ * 组件记录 type=verifyemail 时渲染。
+ */
+import {
+  resolveVerifyEmailSectionMeta,
+  loadVerifyEmailSectionTemplate,
+} from './resolvers/verifyemail';
+import { missingTemplateNoticeHtml } from './resolvers/_shared';
+import { renderVerifyEmailSectionHtml } from '../../lib/verifyEmailTemplate';
+import { resolveAuthClientInit } from '../../lib/authInit';
+import { getTranslationByLocale } from '../../lib/translations';
+
+interface Props {
+  metadata: Record<string, unknown>;
+  locale: string;
+}
+
+const { metadata, locale } = Astro.props;
+const sectionMeta = resolveVerifyEmailSectionMeta(metadata, locale);
+const clientInit = resolveAuthClientInit(metadata, locale);
+const cssUrl = clientInit.cssUrl;
+
+const clientI18n = {
+  submit: sectionMeta.submitLabel,
+  submitting: getTranslationByLocale(locale, 'auth_verify_email_confirming'),
+  resend: sectionMeta.resendLabel,
+  sending: getTranslationByLocale(locale, 'auth_verify_email_sending'),
+  resendIn: getTranslationByLocale(locale, 'auth_verify_email_resend_in'),
+  sentSuccess: getTranslationByLocale(locale, 'auth_verify_email_sent_success'),
+  expiresHint: getTranslationByLocale(locale, 'auth_verify_email_expires_hint'),
+  success: getTranslationByLocale(locale, 'auth_verify_email_success'),
+  errorRequired: getTranslationByLocale(locale, 'auth_verify_email_error_required_code'),
+  errorSendFailed: getTranslationByLocale(locale, 'auth_verify_email_error_send_failed'),
+  errorConfirmFailed: getTranslationByLocale(locale, 'auth_verify_email_error_confirm_failed'),
+  errorNotConfigured: getTranslationByLocale(locale, 'auth_verify_email_error_not_configured'),
+  errorRateLimit: getTranslationByLocale(locale, 'auth_verify_email_error_rate_limit'),
+};
+
+let html = '';
+try {
+  const templateShell = await loadVerifyEmailSectionTemplate(metadata, locale, Astro.url);
+  html = templateShell
+    ? renderVerifyEmailSectionHtml({
+        meta: sectionMeta,
+        templateShell,
+        clientI18n,
+      })
+    : missingTemplateNoticeHtml(locale);
+} catch (error) {
+  console.error('[verifyemail.astro] render failed:', error);
+}
+---
+
+<div
+  class="verifyemail-section-slot verifyemail-section-slot--bare"
+  data-verifyemail-slot
+  data-has-custom-init={clientInit.initScriptUrl || clientInit.initScriptInline ? '1' : '0'}
+  set:html={html}
+/>
+{cssUrl && <link rel="stylesheet" href={cssUrl} />}
+{clientInit.initScriptUrl && (
+  <script src={clientInit.initScriptUrl} data-verifyemail-custom-init="url" />
+)}
+{clientInit.initScriptInline && (
+  <script is:inline data-verifyemail-custom-init="inline">
+    {clientInit.initScriptInline}
+  </script>
+)}
+
+<script>
+  import { initVerifyEmailSections } from '../../lib/verifyEmail.client';
+
+  function setupVerifyEmail() {
+    if (document.querySelector('[data-verifyemail-form]')) {
+      initVerifyEmailSections();
+    }
+  }
+
+  setupVerifyEmail();
+  document.addEventListener('astro:page-load', setupVerifyEmail);
+</script>

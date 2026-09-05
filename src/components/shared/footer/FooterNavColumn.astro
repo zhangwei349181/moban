@@ -1,0 +1,28 @@
+---
+import type { MenuItem } from '../../../lib/menu';
+import { getMenuItemLabel } from '../../../lib/headerMenu';
+import { getFooterLevel2Children } from '../../../lib/footerMenu';
+import FooterNavLink from './FooterNavLink.astro';
+
+interface Props {
+  item: MenuItem;
+  locale: string;
+  index: number;
+}
+
+const { item, locale, index } = Astro.props;
+const title = getMenuItemLabel(item, locale);
+const children = getFooterLevel2Children(item);
+const animateDelay = (0.2 + index * 0.1).toFixed(1);
+---
+
+<div class="col-span-12 md:col-span-4">
+  <div data-ns-animate data-delay={animateDelay} class="space-y-8">
+    <p class="sm:text-heading-6 text-tagline-1 text-secondary font-normal">{title}</p>
+    <ul class="space-y-5">
+      {children.map((child) => (
+        <FooterNavLink item={child} locale={locale} />
+      ))}
+    </ul>
+  </div>
+</div>

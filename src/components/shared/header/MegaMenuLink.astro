@@ -1,0 +1,43 @@
+---
+import type { MenuItem } from '../../../lib/menu';
+import { getMenuItemDescription, getMenuItemLabel, getMenuItemUrl } from '../../../lib/headerMenu';
+import MenuLinkHoverBg from './MenuLinkHoverBg.astro';
+
+interface Props {
+  item: MenuItem;
+  locale: string;
+}
+
+const { item, locale } = Astro.props;
+const label = getMenuItemLabel(item, locale);
+const description = getMenuItemDescription(item, locale);
+const href = getMenuItemUrl(item);
+const target = item.target && item.target !== '_self' ? item.target : undefined;
+---
+
+<li>
+  <a
+    href={href}
+    target={target}
+    rel={target ? 'noopener noreferrer' : undefined}
+    class="group relative flex items-start gap-2 p-3"
+  >
+    <MenuLinkHoverBg />
+    {
+      item.icon_url && (
+        <div
+          class="border-stroke-1 relative z-10 mt-1 flex size-7 shrink-0 items-center justify-center rounded-lg border p-1"
+          set:html={item.icon_url}
+        />
+      )
+    }
+    <div class="relative z-10">
+      <p class="text-tagline-1 text-secondary font-normal">{label}</p>
+      {
+        description && (
+          <p class="text-tagline-2 text-secondary/60 font-normal">{description}</p>
+        )
+      }
+    </div>
+  </a>
+</li>

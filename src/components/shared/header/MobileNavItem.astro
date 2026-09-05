@@ -1,0 +1,24 @@
+---
+import type { MenuItem } from '../../../lib/menu';
+import MobileMegaNavItem from './MobileMegaNavItem.astro';
+import MobileDropdownNavItem from './MobileDropdownNavItem.astro';
+import MobileLinkNavItem from './MobileLinkNavItem.astro';
+
+interface Props {
+  item: MenuItem;
+  locale: string;
+  defaultOpen?: boolean;
+}
+
+const { item, locale, defaultOpen = false } = Astro.props;
+---
+
+{
+  item.item_type === 'mega_menu' ? (
+    <MobileMegaNavItem item={item} locale={locale} defaultOpen={defaultOpen} />
+  ) : item.item_type === 'dropdown' ? (
+    <MobileDropdownNavItem item={item} locale={locale} defaultOpen={defaultOpen} />
+  ) : (
+    <MobileLinkNavItem item={item} locale={locale} />
+  )
+}

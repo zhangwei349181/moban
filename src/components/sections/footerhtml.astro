@@ -1,0 +1,12 @@
+---
+import ChromeHtmlSection from './_ChromeHtmlSection.astro';
+
+interface Props {
+  metadata: Record<string, unknown>;
+  locale: string;
+}
+
+const { metadata, locale } = Astro.props;
+---
+
+<ChromeHtmlSection metadata={metadata} locale={locale} chromeKind="footer" />

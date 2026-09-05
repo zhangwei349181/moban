@@ -1,0 +1,244 @@
+---
+import { getAvailableLanguages, getCurrentLocale } from '../../lib/i18n';
+import type { Language } from '../../lib/languages';
+
+interface Props {
+  /** 浅色页脚（bg-background-13）用 light，深色底栏用 dark */
+  variant?: 'light' | 'dark';
+}
+
+const { variant = 'light' } = Astro.props;
+const isLight = variant === 'light';
+
+const currentLocale = getCurrentLocale(Astro);
+const rawLanguages = getAvailableLanguages(Astro);
+
+/** 无数据时用当前 locale 占位，避免空白 */
+const languages: Language[] =
+  rawLanguages.length > 0
+    ? rawLanguages
+    : [
+        {
+          id: 'fallback',
+          language_code: currentLocale,
+          name: currentLocale,
+          native_name: currentLocale,
+          is_default: true,
+          is_enabled: true,
+          sort_order: 0,
+          status: 'active',
+          tenant_id: '',
+          created_at: '',
+          updated_at: '',
+        },
+      ];
+
+const currentLang =
+  languages.find((l) => l.language_code === currentLocale) ?? languages[0];
+
+const menuId = 'language-dropdown-menu';
+
+const triggerClass = isLight
+  ? 'text-tagline-1 text-secondary/60 hover:text-secondary flex cursor-pointer items-center gap-2 font-normal transition-colors duration-300'
+  : 'footer-link font-inter-tight text-tagline-4 flex cursor-pointer items-center gap-2 font-normal text-white/50 transition-colors duration-300 hover:text-white';
+
+const optionLinkClass = isLight
+  ? 'text-tagline-1 text-secondary/70 hover:text-secondary hover:bg-background-3 flex items-center gap-2.5 px-3 py-2 font-normal transition-colors duration-200'
+  : 'text-tagline-4 flex items-center gap-2.5 px-3 py-2 font-normal text-white/60 transition-colors duration-200 hover:bg-white/5 hover:text-white';
+
+/** 根据语言代码选择主题内已有国旗图 */
+function countryFlagPath(languageCode: string): string {
+  const code = languageCode.toLowerCase();
+  const primary = code.split(/[-_]/)[0] ?? code;
+  const map: Record<string, string> = {
+    'en-us': 'united-states.png',
+    en: 'united-states.png',
+    'en-gb': 'united-kingdom.png',
+    'zh-cn': 'china.png',
+    zh: 'china.png',
+    'zh-tw': 'china.png',
+    'de-de': 'germany.png',
+    de: 'germany.png',
+    'tr-tr': 'turkish.png',
+    tr: 'turkish.png',
+    fr: 'france.png',
+    'fr-fr': 'france.png',
+    ja: 'japan.png',
+    'ja-jp': 'japan.png',
+    es: 'spain.png',
+    ko: 'south-korea.png',
+    it: 'italy.png',
+    pt: 'portugal.png',
+    ru: 'russia.png',
+  };
+  const file = map[code] ?? map[primary] ?? 'united-states.png';
+  return `/assets/images/country/${file}`;
+}
+---
+
+<li class="relative z-20" data-language-picker>
+  <button
+    type="button"
+    data-language-trigger
+    class={triggerClass}
+    aria-expanded="false"
+    aria-haspopup="listbox"
+    aria-controls={menuId}
+  >
+    <img
+      src={countryFlagPath(currentLang.language_code)}
+      alt=""
+      width="16"
+      height="16"
+      class="size-4 shrink-0 rounded-full object-cover"
+    />
+    <span>{currentLang.native_name}</span>
+  </button>
+
+  <ul
+    id={menuId}
+    role="listbox"
+    class:list={[
+      'language-dropdown-menu',
+      isLight
+        ? 'language-dropdown-menu--light overflow-hidden border border-stroke-1 bg-white shadow-14'
+        : 'language-dropdown-menu--dark',
+    ]}
+  >
+    {
+      languages.map((lang) => (
+        <li role="option">
+          <a
+            href="javascript:void(0)"
+            class={optionLinkClass}
+            data-locale={lang.language_code}
+            data-language-switch
+            aria-selected={lang.language_code === currentLocale}
+          >
+            <img
+              src={countryFlagPath(lang.language_code)}
+              alt=""
+              width="16"
+              height="16"
+              class="size-4 shrink-0 rounded-full object-cover"
+            />
+            <span>{lang.native_name}</span>
+          </a>
+        </li>
+      ))
+    }
+  </ul>
+</li>
+
+<style>
+  .language-dropdown-menu {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 8px);
+    z-index: 9999;
+    box-sizing: border-box;
+    min-width: 148px;
+    padding: 4px 0;
+    border-radius: 8px;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: scale(0.95);
+    transform-origin: bottom right;
+    transition:
+      opacity 0.2s ease,
+      transform 0.2s ease,
+      visibility 0.2s ease;
+  }
+
+  .language-dropdown-menu--dark {
+    border: 1px solid rgba(204, 204, 204, 0.3);
+    background-color: var(--color-background-6);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+
+  @supports (color: color-mix(in srgb, #000 50%, #fff)) {
+    .language-dropdown-menu--dark {
+      border: 1px solid color-mix(in srgb, var(--color-stroke-3) 30%, transparent);
+    }
+  }
+
+  [data-language-picker][data-open='true'] .language-dropdown-menu {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: scale(1);
+  }
+</style>
+
+<script is:inline>
+  (function () {
+    function applyLocale(newLocale) {
+      window.__ASTRO_LOCALE__ = newLocale;
+      document.cookie =
+        'locale=' +
+        encodeURIComponent(newLocale) +
+        '; path=/; max-age=31536000; SameSite=Lax';
+      window.location.reload();
+    }
+
+    function setOpen(picker, open) {
+      if (!picker) return;
+      picker.dataset.open = open ? 'true' : 'false';
+      var trigger = picker.querySelector('[data-language-trigger]');
+      if (trigger) trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    function closeAll(except) {
+      document.querySelectorAll('[data-language-picker]').forEach(function (el) {
+        if (el !== except) setOpen(el, false);
+      });
+    }
+
+    function onDocumentClick(e) {
+      var picker = e.target.closest('[data-language-picker]');
+      if (!picker) closeAll();
+    }
+
+    function onClick(e) {
+      var trigger = e.target.closest('[data-language-trigger]');
+      if (trigger) {
+        var picker = trigger.closest('[data-language-picker]');
+        if (!picker) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var isOpen = picker.dataset.open === 'true';
+        closeAll(picker);
+        setOpen(picker, !isOpen);
+        return;
+      }
+
+      var link = e.target.closest('[data-language-switch][data-locale]');
+      if (!link) return;
+      var picker = link.closest('[data-language-picker]');
+      if (!picker) return;
+      var menu = picker.querySelector('.language-dropdown-menu');
+      if (!menu || !menu.contains(link)) return;
+      e.preventDefault();
+      var code = link.getAttribute('data-locale');
+      if (code) applyLocale(code);
+    }
+
+    function onKeydown(e) {
+      if (e.key !== 'Escape') return;
+      closeAll();
+    }
+
+    function init() {
+      document.addEventListener('click', onClick);
+      document.addEventListener('click', onDocumentClick, true);
+      document.addEventListener('keydown', onKeydown);
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+  })();
+</script>

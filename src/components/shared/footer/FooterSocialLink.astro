@@ -1,0 +1,18 @@
+---
+import type { FooterSocialLinkDisplay } from './content';
+
+interface Props {
+  link: FooterSocialLinkDisplay;
+  showDivider?: boolean;
+}
+
+const { link, showDivider = false } = Astro.props;
+---
+
+<span class="contents">
+  {showDivider && <div class="bg-stroke-3 h-6 w-px" aria-hidden="true" />}
+  <a href={link.href} class="footer-social-link">
+    <span class="sr-only">{link.label}</span>
+    <img class="size-6" src={link.icon} alt={link.label} />
+  </a>
+</span>

@@ -1,0 +1,30 @@
+{
+	"name": "moban",
+	"type": "module",
+	"version": "0.0.1",
+	"engines": {
+		"node": ">=22.12.0"
+	},
+	"scripts": {
+		"dev": "astro dev",
+		"build": "astro build",
+		"preview": "npm run build && astro preview",
+		"astro": "astro",
+		"generate-types": "wrangler types",
+		"deploy": "npm run build && wrangler deploy --dispatch-namespace gy1225",
+		"cf-typegen": "wrangler types",
+		"upload": "node scripts/upload.mjs",
+		"cms": "node scripts/cms.mjs"
+	},
+	"dependencies": {
+		"@astrojs/cloudflare": "^13.5.1",
+		"astro": "^6.3.3",
+		"marked": "^18.0.3"
+	},
+	"devDependencies": {
+		"wrangler": "^4.92.0"
+	},
+	"overrides": {
+		"vite": "^7"
+	}
+}

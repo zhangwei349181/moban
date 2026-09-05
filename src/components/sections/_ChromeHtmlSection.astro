@@ -1,0 +1,151 @@
+---
+import { renderChromeTemplate, type RenderChromeTemplateResult } from '../../lib/chromeTemplate';
+import { getTenantId } from '../../lib/i18n';
+import { missingTemplateNoticeHtml } from './resolvers/_shared';
+import type { ChromeShellKind } from '../../lib/chromeComponentCode';
+import type { ExtractedHtmlScript } from './resolvers/componentsHtml';
+
+interface Props {
+  metadata: Record<string, unknown>;
+  locale: string;
+  chromeKind: ChromeShellKind;
+}
+
+const { metadata, locale, chromeKind } = Astro.props;
+const tenantId = getTenantId(Astro);
+
+let rendered: RenderChromeTemplateResult | null = null;
+try {
+  rendered = await renderChromeTemplate(metadata, locale, Astro.url, chromeKind, tenantId);
+} catch (error) {
+  console.error(`[chromeHtml] render ${chromeKind}html failed:`, error);
+}
+
+const html = rendered?.html ?? null;
+const cssUrls = rendered?.cssUrls ?? [];
+const scriptRefs = rendered?.scriptRefs ?? [];
+const shellInitScriptUrl = rendered?.shellInitScriptUrl ?? null;
+const shellInitScriptInline = rendered?.shellInitScriptInline ?? null;
+const shellInlineHtmlScripts: ExtractedHtmlScript[] = rendered?.shellInlineHtmlScripts ?? [];
+const useBareLayout = rendered?.useBareLayout ?? true;
+
+const needsShellInlineBoot = Boolean(html) && shellInlineHtmlScripts.length > 0;
+const needsNestedInlineBoot = scriptRefs.some((r) => r.inline && !r.src);
+const needsClientBoot = Boolean(html);
+---
+
+{
+  html ? (
+    useBareLayout ? (
+      <div
+        class:list={['chrome-html-slot chrome-html-slot--bare', `chrome-html-slot--${chromeKind}`]}
+        data-chrome-slot
+        data-chrome-kind={chromeKind}
+        set:html={html}
+      />
+    ) : (
+      <section
+        class:list={['chrome-html-slot', `chrome-html-slot--${chromeKind}`]}
+        data-chrome-slot
+        data-chrome-kind={chromeKind}
+      >
+        <div class="chrome-html-slot__inner" set:html={html} />
+      </section>
+    )
+  ) : (
+    <div
+      class:list={['chrome-html-slot chrome-html-slot--bare', `chrome-html-slot--${chromeKind}`]}
+      data-chrome-slot
+      data-chrome-kind={chromeKind}
+      set:html={missingTemplateNoticeHtml(locale)}
+    />
+  )
+}
+
+{cssUrls.map((href) => (
+  <link rel="stylesheet" href={href} data-chrome-css />
+))}
+
+{
+  scriptRefs.map((ref, index) =>
+    ref.src ? (
+      <script src={ref.src} data-chrome-nested-init={ref.code || index} />
+    ) : ref.inline ? (
+      <script is:inline data-chrome-nested-init={ref.code || index}>
+        {ref.inline}
+      </script>
+    ) : null
+  )
+}
+
+{shellInitScriptUrl && <script src={shellInitScriptUrl} data-chrome-shell-init="url" />}
+{shellInitScriptInline && (
+  <script is:inline data-chrome-shell-init="inline">
+    {shellInitScriptInline}
+  </script>
+)}
+
+{
+  needsClientBoot && (
+    <script>
+      import { ensureChromeHtmlBoot } from '../../lib/chromeHtmlBoot.client';
+
+      ensureChromeHtmlBoot();
+    </script>
+  )
+}
+
+{
+  needsShellInlineBoot && (
+    <script define:vars={{ shellInlineHtmlScripts }}>
+      function runWhenPageReady(fn) {
+        if (document.readyState === 'complete') {
+          fn();
+        } else {
+          window.addEventListener('load', fn, { once: true });
+        }
+      }
+
+      function loadExternalScript(item) {
+        return new Promise(function (resolve) {
+          var el = document.createElement('script');
+          if (item.type) el.type = item.type;
+          el.src = item.src;
+          el.onload = function () {
+            resolve();
+          };
+          el.onerror = function () {
+            console.warn('[chromeHtml] failed to load script', item.src);
+            resolve();
+          };
+          document.body.appendChild(el);
+        });
+      }
+
+      function runInlineScript(item) {
+        var el = document.createElement('script');
+        if (item.type) el.type = item.type;
+        el.textContent = item.inline;
+        document.body.appendChild(el);
+      }
+
+      function executeScripts(scriptList) {
+        var chain = Promise.resolve();
+        scriptList.forEach(function (item) {
+          chain = chain.then(function () {
+            if (item.src) return loadExternalScript(item);
+            if (item.inline) runInlineScript(item);
+          });
+        });
+        return chain;
+      }
+
+      function bootShellInlineScripts() {
+        executeScripts(shellInlineHtmlScripts);
+      }
+
+      runWhenPageReady(bootShellInlineScripts);
+      document.addEventListener('astro:page-load', bootShellInlineScripts);
+    </script>
+  )
+}

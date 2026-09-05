@@ -1,0 +1,114 @@
+---
+import Layout from '../layouts/Layout.astro';
+import PageComponents from '../components/page/PageComponents.astro';
+import PageComponentSlotView from '../components/page/PageComponentSlot.astro';
+import ListPageLayout from '../components/page/ListPageLayout.astro';
+import { loadCmsPageViewModel } from '../lib/cmsPage';
+import { isPageHeaderSlot } from '../lib/pageHeaderComponentCode';
+import { isValidPageCode, normalizeDynamicPageCode } from '../lib/dynamicPage';
+import { getCurrentLocale, getTenantId } from '../lib/i18n';
+import { fetchWebPagesIndex, hasPageCodeInIndex } from '../lib/webPage';
+import { buildListPageModel, type ListPageModel } from '../lib/listPage';
+import { filterPageBodySlots } from '../lib/pageBodySlots';
+import { isPageFooterChromeSlot, isPageHeaderChromeSlot } from '../lib/pageChromeSlots';
+import { getSystemPageSeoDefaults } from '../lib/pageMetadata';
+import { isListPageType, isPostSinglePageType, isProductSinglePageType, resolvePageType } from '../lib/pageType';
+
+
+export const prerender = false;
+
+const locale = getCurrentLocale(Astro);
+const tenantId = getTenantId(Astro);
+
+const slugParam = Astro.params.slug as unknown;
+const slug =
+  typeof slugParam === 'string'
+    ? slugParam
+    : Array.isArray(slugParam)
+      ? (slugParam as unknown[]).join('/')
+      : '';
+
+const pageCode = normalizeDynamicPageCode(slug);
+
+if (!pageCode || !isValidPageCode(pageCode)) {
+  return new Response(null, { status: 404, statusText: 'Not Found' });
+}
+
+const pagesIndex = await fetchWebPagesIndex(tenantId);
+if (!hasPageCodeInIndex(pagesIndex, pageCode)) {
+  return new Response(null, { status: 404, statusText: 'Not Found' });
+}
+
+const seoDefaults =
+  pageCode === 'bloglist' || pageCode === 'product'
+    ? getSystemPageSeoDefaults(locale, pageCode)
+    : { title: pageCode, description: '', keywords: pageCode };
+
+const mainClassFallback = '';
+
+const cms = await loadCmsPageViewModel(pageCode, locale, tenantId, seoDefaults, Astro.url, { mainClassFallback });
+const pageType = resolvePageType(cms.pageData?.page);
+
+if (isPostSinglePageType(pageType) || isProductSinglePageType(pageType)) {
+  return new Response(null, { status: 404, statusText: 'Not Found' });
+}
+
+let listModel: ListPageModel | null = null;
+if (isListPageType(pageType)) {
+  listModel = await buildListPageModel(cms, locale, tenantId, Astro.url);
+}
+
+const { pageComponents, seo } = cms;
+
+const headerSlots = pageComponents.filter(isPageHeaderChromeSlot);
+const pageheaderSlots = pageComponents.filter(isPageHeaderSlot);
+const bodySlots = filterPageBodySlots(
+  pageComponents.filter(
+    (s) =>
+      !isPageHeaderChromeSlot(s) &&
+      !isPageFooterChromeSlot(s) &&
+      !isPageHeaderSlot(s)
+  )
+);
+const footerSlots = pageComponents.filter(isPageFooterChromeSlot);
+
+const pageHeaderSeoFallback = {
+  title: seo.title,
+  description: seo.description,
+  keywords: seo.keywords,
+};
+---
+
+{listModel ? (
+  <ListPageLayout model={listModel} />
+) : (
+  <Layout
+    title={seo.title}
+    description={seo.description}
+    keywords={seo.keywords}
+    pageCode={pageCode}
+    frame={cms.frame}
+  >
+    {headerSlots.length > 0 && (
+      <PageComponents slots={headerSlots} locale={locale} pageCode={pageCode} />
+    )}
+    <main class={cms.frame.mainClass}>
+      {
+        pageheaderSlots.length > 0 &&
+          pageheaderSlots.map((slot) => (
+            <PageComponentSlotView
+              pageSlot={slot}
+              locale={locale}
+              pageCode={pageCode}
+              pageHeaderSeoFallback={pageHeaderSeoFallback}
+            />
+          ))
+      }
+      <PageComponents slots={bodySlots} locale={locale} pageCode={pageCode} />
+    </main>
+    {footerSlots.length > 0 && (
+      <PageComponents slots={footerSlots} locale={locale} pageCode={pageCode} />
+    )}
+
+  </Layout>
+)}

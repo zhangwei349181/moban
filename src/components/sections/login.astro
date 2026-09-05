@@ -1,0 +1,71 @@
+---
+/**
+ * 登录区块：布局由 CMS html_url 定义，提交由 login.client 处理。
+ * 组件记录 type=login 时渲染（旧租户仍可用 code=login / loginform / authlogin）。
+ */
+import { resolveLoginSectionMeta, loadLoginSectionTemplate } from './resolvers/login';
+import { missingTemplateNoticeHtml } from './resolvers/_shared';
+import { renderLoginSectionHtml } from '../../lib/loginTemplate';
+import { resolveAuthClientInit } from '../../lib/authInit';
+import { getTranslationByLocale } from '../../lib/translations';
+
+interface Props {
+  metadata: Record<string, unknown>;
+  locale: string;
+}
+
+const { metadata, locale } = Astro.props;
+const sectionMeta = resolveLoginSectionMeta(metadata, locale);
+const clientInit = resolveAuthClientInit(metadata, locale);
+const cssUrl = clientInit.cssUrl;
+
+const clientI18n = {
+  submit: sectionMeta.submitLabel,
+  submitting: getTranslationByLocale(locale, 'auth_login_loading'),
+  errorIncomplete: getTranslationByLocale(locale, 'auth_login_error_incomplete'),
+  errorFailed: getTranslationByLocale(locale, 'auth_login_error_failed'),
+};
+
+let html = '';
+try {
+  const templateShell = await loadLoginSectionTemplate(metadata, locale, Astro.url);
+  html = templateShell
+    ? renderLoginSectionHtml({
+        meta: sectionMeta,
+        templateShell,
+        clientI18n,
+      })
+    : missingTemplateNoticeHtml(locale);
+} catch (error) {
+  console.error('[login.astro] render failed:', error);
+}
+---
+
+<div
+  class="login-section-slot login-section-slot--bare"
+  data-login-slot
+  data-has-custom-init={clientInit.initScriptUrl || clientInit.initScriptInline ? '1' : '0'}
+  set:html={html}
+/>
+{cssUrl && <link rel="stylesheet" href={cssUrl} />}
+{clientInit.initScriptUrl && (
+  <script src={clientInit.initScriptUrl} data-login-custom-init="url" />
+)}
+{clientInit.initScriptInline && (
+  <script is:inline data-login-custom-init="inline">
+    {clientInit.initScriptInline}
+  </script>
+)}
+
+<script>
+  import { initLoginSections } from '../../lib/login.client';
+
+  function setupLogin() {
+    if (document.querySelector('[data-login-form]')) {
+      initLoginSections();
+    }
+  }
+
+  setupLogin();
+  document.addEventListener('astro:page-load', setupLogin);
+</script>

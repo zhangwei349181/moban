@@ -1,0 +1,75 @@
+---
+/**
+ * 注册区块：布局由 CMS html_url 定义，提交由 signup.client 处理。
+ * 组件记录 type=signup 时渲染（旧租户仍可用 code=signup / signupform / authsignup）。
+ */
+import { resolveSignupSectionMeta, loadSignupSectionTemplate } from './resolvers/signup';
+import { missingTemplateNoticeHtml } from './resolvers/_shared';
+import { renderSignupSectionHtml } from '../../lib/signupTemplate';
+import { resolveAuthClientInit } from '../../lib/authInit';
+import { getTranslationByLocale } from '../../lib/translations';
+
+interface Props {
+  metadata: Record<string, unknown>;
+  locale: string;
+}
+
+const { metadata, locale } = Astro.props;
+const sectionMeta = resolveSignupSectionMeta(metadata, locale);
+const clientInit = resolveAuthClientInit(metadata, locale);
+const cssUrl = clientInit.cssUrl;
+
+const clientI18n = {
+  submit: sectionMeta.submitLabel,
+  submitting: getTranslationByLocale(locale, 'auth_signup_loading'),
+  errorRequired: getTranslationByLocale(locale, 'auth_signup_error_required_fields'),
+  errorPasswordLength: getTranslationByLocale(locale, 'auth_signup_error_password_length'),
+  errorInvalidEmail: getTranslationByLocale(locale, 'auth_signup_error_invalid_email'),
+  errorUsernameFormat: getTranslationByLocale(locale, 'auth_signup_error_username_format'),
+  successRedirect: getTranslationByLocale(locale, 'auth_signup_success_redirect'),
+  errorFailed: getTranslationByLocale(locale, 'auth_signup_error_failed'),
+};
+
+let html = '';
+try {
+  const templateShell = await loadSignupSectionTemplate(metadata, locale, Astro.url);
+  html = templateShell
+    ? renderSignupSectionHtml({
+        meta: sectionMeta,
+        templateShell,
+        clientI18n,
+      })
+    : missingTemplateNoticeHtml(locale);
+} catch (error) {
+  console.error('[signup.astro] render failed:', error);
+}
+---
+
+<div
+  class="signup-section-slot signup-section-slot--bare"
+  data-signup-slot
+  data-has-custom-init={clientInit.initScriptUrl || clientInit.initScriptInline ? '1' : '0'}
+  set:html={html}
+/>
+{cssUrl && <link rel="stylesheet" href={cssUrl} />}
+{clientInit.initScriptUrl && (
+  <script src={clientInit.initScriptUrl} data-signup-custom-init="url" />
+)}
+{clientInit.initScriptInline && (
+  <script is:inline data-signup-custom-init="inline">
+    {clientInit.initScriptInline}
+  </script>
+)}
+
+<script>
+  import { initSignupSections } from '../../lib/signup.client';
+
+  function setupSignup() {
+    if (document.querySelector('[data-signup-form]')) {
+      initSignupSections();
+    }
+  }
+
+  setupSignup();
+  document.addEventListener('astro:page-load', setupSignup);
+</script>

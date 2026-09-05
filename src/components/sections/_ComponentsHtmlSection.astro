@@ -1,0 +1,137 @@
+---
+// 通用 HTML 插槽：metadata 内联 html 或 html_url 外链（大段 HTML 放 CDN/public）。
+// 外链/内联 HTML 中的 script 会被剥离，在 window load 后按序执行（set:html 不会运行 script）。
+// 展示层样式与 init 与 html_url 对称：css_url、init_script_url（见 componentsHtml.ts）。
+import {
+  resolveComponentsHtmlDisplay,
+  resolveComponentsCss,
+  resolveComponentsInitScript,
+  loadComponentsHtmlContent,
+  splitInlineScriptsFromHtml,
+  htmlContentUsesBareRoot,
+} from './resolvers/componentsHtml';
+import { missingTemplateNoticeHtml } from './resolvers/_shared';
+
+interface Props {
+  metadata: Record<string, unknown>;
+  locale: string;
+}
+
+const { metadata, locale } = Astro.props;
+const d = resolveComponentsHtmlDisplay(metadata, locale);
+const css = resolveComponentsCss(metadata, locale);
+const clientInit = resolveComponentsInitScript(metadata, locale);
+const htmlRaw = await loadComponentsHtmlContent(d, Astro.url);
+const parsed = htmlRaw ? splitInlineScriptsFromHtml(htmlRaw) : null;
+const html = parsed?.html ?? null;
+const scripts = parsed?.scripts ?? [];
+const needsInlineHtmlScriptBoot = Boolean(html) && scripts.length > 0;
+const needsClientBoot = needsInlineHtmlScriptBoot || Boolean(clientInit.initScriptUrl || clientInit.initScriptInline);
+/** section / header / top-nav 组合根节点走 bare，避免破坏 fixed 导航与全宽 hero */
+const useBareLayout = d.bare || htmlContentUsesBareRoot(html);
+---
+
+{
+  html ? (
+    useBareLayout ? (
+      <div
+        class:list={['components-html-slot components-html-slot--bare', d.wrapperClass]}
+        data-components-html-slot
+        data-has-custom-init={clientInit.initScriptUrl || clientInit.initScriptInline ? '1' : '0'}
+        set:html={html}
+      />
+    ) : (
+      <section
+        class:list={['components-html-slot py-[80px] md:py-[120px] xl:py-[176px]', d.wrapperClass]}
+        data-components-html-slot
+        data-has-custom-init={clientInit.initScriptUrl || clientInit.initScriptInline ? '1' : '0'}
+        aria-label={d.ariaLabel ?? undefined}
+      >
+        <div class:list={[d.containerClass]}>
+          <div class="components-html-slot__inner" set:html={html} />
+        </div>
+      </section>
+    )
+  ) : (
+    <div
+      class:list={['components-html-slot components-html-slot--bare', d.wrapperClass]}
+      data-components-html-slot
+      set:html={missingTemplateNoticeHtml(locale)}
+    />
+  )
+}
+
+{css.cssUrl && <link rel="stylesheet" href={css.cssUrl} />}
+{clientInit.initScriptUrl && (
+  <script type="module" src={clientInit.initScriptUrl} data-components-html-custom-init="url" />
+)}
+{clientInit.initScriptInline && (
+  <script type="module" is:inline data-components-html-custom-init="inline">
+    {clientInit.initScriptInline}
+  </script>
+)}
+
+{
+  needsClientBoot && (
+    <script>
+      import { ensureComponentsHtmlBoot } from '../../lib/componentsHtmlBoot.client';
+
+      ensureComponentsHtmlBoot();
+    </script>
+  )
+}
+
+{
+  needsInlineHtmlScriptBoot && (
+    <script define:vars={{ scripts }}>
+      function runWhenPageReady(fn) {
+        if (document.readyState === 'complete') {
+          fn();
+        } else {
+          window.addEventListener('load', fn, { once: true });
+        }
+      }
+
+      function loadExternalScript(item) {
+        return new Promise(function (resolve) {
+          var el = document.createElement('script');
+          if (item.type) el.type = item.type;
+          el.src = item.src;
+          el.onload = function () {
+            resolve();
+          };
+          el.onerror = function () {
+            console.warn('[componentsHtml] failed to load script', item.src);
+            resolve();
+          };
+          document.body.appendChild(el);
+        });
+      }
+
+      function runInlineScript(item) {
+        var el = document.createElement('script');
+        if (item.type) el.type = item.type;
+        el.textContent = item.inline;
+        document.body.appendChild(el);
+      }
+
+      function executeComponentsHtmlScripts(scriptList) {
+        var chain = Promise.resolve();
+        scriptList.forEach(function (item) {
+          chain = chain.then(function () {
+            if (item.src) return loadExternalScript(item);
+            if (item.inline) runInlineScript(item);
+          });
+        });
+        return chain;
+      }
+
+      function bootComponentsHtmlInlineScripts() {
+        executeComponentsHtmlScripts(scripts);
+      }
+
+      runWhenPageReady(bootComponentsHtmlInlineScripts);
+      document.addEventListener('astro:page-load', bootComponentsHtmlInlineScripts);
+    </script>
+  )
+}

@@ -1,0 +1,37 @@
+---
+interface Props {
+  href: string;
+  ariaLabel: string;
+  text: string;
+  showIcon?: boolean;
+}
+
+const { href, ariaLabel, text, showIcon = true } = Astro.props;
+---
+
+<a href={href} aria-label={ariaLabel}>
+  <button
+    type="button"
+    class="button bg-secondary font-ibm-plex-mono text-tagline-1 text-white button-inner group flex h-12 w-fit cursor-pointer items-center rounded-full p-1 font-normal first-letter:uppercase"
+  >
+    {
+      showIcon && (
+        <div
+          class="button-icon relative z-20 flex h-10 w-14 items-center justify-center overflow-hidden rounded-full bg-(image:--color-gradient-14)"
+          aria-hidden="true"
+        >
+          <span class="flex size-6 shrink-0 items-center justify-center" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" class="size-6 fill-black">
+              <path d="M8 5H10V7H8V5Z" />
+              <path d="M11 8H13V10H11V8Z" />
+              <path d="M14 11H16V13H14V11Z" />
+              <path d="M11 14H13V16H11V14Z" />
+              <path d="M8 17H10V19H8V17Z" />
+            </svg>
+          </span>
+        </div>
+      )
+    }
+    <span class="button-text shrink-0 stroke-0 px-4" aria-hidden="true">{text}</span>
+  </button>
+</a>

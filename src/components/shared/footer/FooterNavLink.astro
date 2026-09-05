@@ -1,0 +1,25 @@
+---
+import type { MenuItem } from '../../../lib/menu';
+import { getMenuItemLabel, getMenuItemUrl } from '../../../lib/headerMenu';
+
+interface Props {
+  item: MenuItem;
+  locale: string;
+}
+
+const { item, locale } = Astro.props;
+const label = getMenuItemLabel(item, locale);
+const href = getMenuItemUrl(item);
+const target = item.target && item.target !== '_self' ? item.target : undefined;
+---
+
+<li>
+  <a
+    href={href}
+    target={target}
+    rel={target ? 'noopener noreferrer' : undefined}
+    class="footer-link-v2"
+  >
+    {label}
+  </a>
+</li>

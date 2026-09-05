@@ -1,0 +1,59 @@
+---
+/**
+ * 会员中心子块独立挂页时的回退渲染（页面通常不应关联 dashboardpanel，应写在壳 {{code}} 里）。
+ */
+import { loadDashboardPanelTemplate, resolveDashboardPanelKindFromCode } from './resolvers/dashboard';
+import { missingTemplateNoticeHtml } from './resolvers/_shared';
+import { renderDashboardPanelHtml } from '../../lib/dashboardTemplate';
+import { resolveCommerceClientInit } from '../../lib/commerceInit';
+
+interface Props {
+  metadata: Record<string, unknown>;
+  locale: string;
+  componentsCode?: string;
+}
+
+const { metadata, locale, componentsCode = '' } = Astro.props;
+const panelKey = resolveDashboardPanelKindFromCode(componentsCode);
+const clientInit = resolveCommerceClientInit(metadata, locale);
+const cssUrl = clientInit.cssUrl;
+
+let html = '';
+let panelId = '';
+if (panelKey && panelKey !== 'nav') {
+  panelId = panelKey;
+  try {
+    const template = await loadDashboardPanelTemplate(metadata, locale, Astro.url);
+    html = template
+      ? renderDashboardPanelHtml(template)
+      : missingTemplateNoticeHtml(locale);
+  } catch (error) {
+    console.error('[dashboardPanel.astro] render failed:', error);
+  }
+}
+---
+
+{panelKey && panelKey !== 'nav' && (
+  <div
+    class="dashboard-panel-slot dashboard-panel-slot--bare"
+    data-dashboard-panel-slot
+    data-dashboard-panel-root={panelId}
+    data-dashboard-panel-id={panelId}
+    data-use-platform-ui={clientInit.usePlatformUi ? '1' : '0'}
+    set:html={html}
+  />
+)}
+{cssUrl && <link rel="stylesheet" href={cssUrl} />}
+
+<script>
+  import { bootDashboardPanel } from '../../lib/dashboardBoot.client';
+
+  function runBoot() {
+    const slot = document.querySelector('[data-dashboard-panel-slot]');
+    const usePlatformUi = slot?.getAttribute('data-use-platform-ui') !== '0';
+    const id = slot?.getAttribute('data-dashboard-panel-id') || '';
+    if (usePlatformUi && id) bootDashboardPanel(id);
+  }
+
+  runBoot();
+</script>

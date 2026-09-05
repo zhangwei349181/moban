@@ -1,0 +1,17 @@
+---
+import type { MenuItem } from '../../../lib/menu';
+import FooterNavColumn from './FooterNavColumn.astro';
+
+interface Props {
+  items: MenuItem[];
+  locale: string;
+}
+
+const { items, locale } = Astro.props;
+---
+
+<div class="col-span-12 grid grid-cols-12 gap-x-0 gap-y-8 xl:col-span-8">
+  {items.map((item, index) => (
+    <FooterNavColumn item={item} locale={locale} index={index} />
+  ))}
+</div>

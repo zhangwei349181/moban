@@ -1,0 +1,19 @@
+---
+import type { MenuItem } from '../../../lib/menu';
+import MegaMenuNavItem from './MegaMenuNavItem.astro';
+import DropdownNavItem from './DropdownNavItem.astro';
+import LinkNavItem from './LinkNavItem.astro';
+
+interface Props {
+  item: MenuItem;
+  locale: string;
+}
+
+const { item, locale } = Astro.props;
+---
+
+{item.item_type === 'mega_menu' && <MegaMenuNavItem item={item} locale={locale} />}
+{item.item_type === 'dropdown' && <DropdownNavItem item={item} locale={locale} />}
+{item.item_type !== 'mega_menu' && item.item_type !== 'dropdown' && (
+  <LinkNavItem item={item} locale={locale} />
+)}

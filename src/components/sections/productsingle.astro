@@ -1,0 +1,118 @@
+---
+/**
+ * ProductSingle 产品详情区块：标题、图集、正文、变体/加购。
+ * 组件记录 type=productsingle 时渲染（旧租户仍可用 code=productsingle / productsingle01–99）。
+ * 页面需传入 articleId（由 [prefix]-[id].astro 传入 URL 参数 id）。
+ */
+import { loadProductSingleSectionTemplate, resolveProductSingleClientInit } from './resolvers/productsingle';
+import { isZhLocale, missingTemplateNoticeHtml } from './resolvers/_shared';
+import {
+  loadProductSingleSection,
+  serializeProductSingleSsrPayload,
+} from '../../lib/productSingleSection';
+import { getTenantId } from '../../lib/i18n';
+import { renderProductSingleSectionHtml } from '../../lib/productSingleTemplate';
+import { getTranslationByLocale } from '../../lib/translations';
+import ProductSingleRuntime from './ProductSingleRuntime.astro';
+
+interface Props {
+  metadata: Record<string, unknown>;
+  locale: string;
+  articleId?: string;
+}
+
+const { metadata, locale, articleId: articleIdProp } = Astro.props;
+const tenantId = getTenantId(Astro);
+const articleId = String(
+  articleIdProp ?? Astro.params.id ?? metadata.article_id ?? metadata.articleId ?? ''
+).trim();
+
+let html = '';
+let ssrPayloadJson = '';
+let hasTemplate = false;
+const clientInit = resolveProductSingleClientInit(metadata, locale);
+const cssUrl = clientInit.cssUrl;
+
+const t = (key: Parameters<typeof getTranslationByLocale>[1]) =>
+  getTranslationByLocale(locale, key);
+
+try {
+  const templateShell = await loadProductSingleSectionTemplate(metadata, locale, Astro.url);
+  if (!templateShell) {
+    html = missingTemplateNoticeHtml(locale);
+  } else {
+    hasTemplate = true;
+    const result = await loadProductSingleSection(articleId, locale, tenantId, metadata);
+    html = renderProductSingleSectionHtml({
+      data: result.data,
+      templateShell,
+      labels: {
+        discountTitle: t('discount_section_title'),
+        addToCart: isZhLocale(locale) ? '加入购物车' : 'Add to Cart',
+        wishlist: t('add_to_wishlist'),
+        loading: t('loading_product_data'),
+        addressPrompt: t('select_shipping_address'),
+        login: t('account_menu_login'),
+        selectAddress: t('select_address'),
+        selectAddressOption: t('please_select_address'),
+        shippingAddress: t('shipping_address'),
+        shippingTemplate: t('shipping_template'),
+        viewShippingRule: t('view_shipping_rule'),
+        selectTemplate: t('please_select_template'),
+        subtotal: t('subtotal'),
+        shipping: t('shipping'),
+        tax: t('tax'),
+        total: t('total'),
+        discountModalTitle: t('discount_section_title'),
+        shippingModalTitle: t('view_shipping_rule'),
+        cfTabInfo: t('crowdfunding_tab_info'),
+        cfTabUpdates: t('crowdfunding_tab_updates'),
+        cfTabFaqs: t('crowdfunding_tab_faqs'),
+        tabDescription: t('product_tab_description'),
+        tabAdditionalInfo: t('product_tab_additional_info'),
+        emptyDescription: t('product_empty_description'),
+        emptyAdditionalInfo: t('product_empty_additional_info'),
+      },
+    });
+
+    if (result.ssrPayload) {
+      ssrPayloadJson = serializeProductSingleSsrPayload(result.ssrPayload);
+    }
+  }
+} catch (error) {
+  console.error('[productsingle.astro] render failed:', error);
+}
+---
+
+<div
+  class="productsingle-section-slot productsingle-section-slot--bare"
+  data-productsingle-slot
+  data-use-platform-ui={clientInit.usePlatformUi ? '1' : '0'}
+  data-has-custom-init={clientInit.initScriptUrl || clientInit.initScriptInline ? '1' : '0'}
+  set:html={html}
+/>
+{cssUrl && <link rel="stylesheet" href={cssUrl} />}
+{hasTemplate && ssrPayloadJson && (
+  <script type="application/json" id="product-single-ssr-payload" set:html={ssrPayloadJson} />
+)}
+{hasTemplate && <ProductSingleRuntime />}
+{clientInit.initScriptUrl && (
+  <script src={clientInit.initScriptUrl} data-productsingle-custom-init="url" />
+)}
+{clientInit.initScriptInline && (
+  <script is:inline data-productsingle-custom-init="inline">
+    {clientInit.initScriptInline}
+  </script>
+)}
+
+<script>
+  import { bootProductSingle } from '../../lib/productSingleBoot.client';
+
+  function runBoot() {
+    const slot = document.querySelector('[data-productsingle-slot]');
+    const usePlatformUi = slot?.getAttribute('data-use-platform-ui') !== '0';
+    bootProductSingle({ usePlatformUi });
+  }
+
+  runBoot();
+</script>

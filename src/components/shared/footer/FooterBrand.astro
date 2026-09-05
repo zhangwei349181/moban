@@ -1,0 +1,25 @@
+---
+import type { FooterContent } from './content';
+import FooterSocialLinks from './FooterSocialLinks.astro';
+
+interface Props {
+  content: FooterContent;
+}
+
+const { content } = Astro.props;
+---
+
+<div data-ns-animate data-delay="0.1" class="col-span-12 xl:col-span-4">
+  <div class="max-w-[306px]">
+    <a href={content.logo.href}>
+      <span class="sr-only">{content.logo.srOnly}</span>
+      <figure>
+        <img src={content.logo.image} alt={content.logo.alt} />
+      </figure>
+    </a>
+    <p class="text-background-14/60 text-tagline-1 mt-4 mb-7 font-normal">
+      {content.description}
+    </p>
+    <FooterSocialLinks links={content.socialLinks} />
+  </div>
+</div>

@@ -1,0 +1,22 @@
+{
+	"compatibility_date": "2026-05-16",
+	"compatibility_flags": [
+		"global_fetch_strictly_public"
+	],
+	"name": "moban",
+	"main": "@astrojs/cloudflare/entrypoints/server",
+	"assets": {
+		"directory": "./dist",
+		"binding": "ASSETS"
+	},
+	"observability": {
+		"enabled": true
+	},
+	// 正式部署请换成 moban 自己的 SESSION KV，不要长期占用 a0005 的 id。
+	"kv_namespaces": [
+		{
+			"binding": "SESSION",
+			"id": "6314d7f8e36f4b3794c31d96f5e0e75c"
+		}
+	]
+}

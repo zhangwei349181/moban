@@ -1,0 +1,81 @@
+---
+/**
+ * 会员中心壳：布局由 CMS html_url 定义，{{子组件code}} 嵌套 dashboardpanel。
+ * 组件记录 type=dashboard 时渲染。
+ */
+import { resolveDashboardSectionMeta, loadDashboardTemplates } from './resolvers/dashboard';
+import { missingTemplateNoticeHtml } from './resolvers/_shared';
+import { renderDashboardSectionHtml } from '../../lib/dashboardTemplate';
+import { resolveCommerceClientInit } from '../../lib/commerceInit';
+import { getTenantId } from '../../lib/i18n';
+
+interface Props {
+  metadata: Record<string, unknown>;
+  locale: string;
+}
+
+const { metadata, locale } = Astro.props;
+const sectionMeta = resolveDashboardSectionMeta(metadata, locale);
+const clientInit = resolveCommerceClientInit(metadata, locale);
+const tenantId = getTenantId(Astro);
+
+let html = '';
+let cssUrls: string[] = clientInit.cssUrl ? [clientInit.cssUrl] : [];
+let scriptRefs: { src?: string; inline?: string; code?: string }[] = [];
+try {
+  const templateShell = await loadDashboardTemplates(metadata, locale, Astro.url);
+  if (templateShell) {
+    const rendered = await renderDashboardSectionHtml(
+      metadata,
+      locale,
+      Astro.url,
+      sectionMeta,
+      tenantId,
+      templateShell
+    );
+    if (rendered) {
+      html = rendered.html;
+      cssUrls = rendered.cssUrls;
+      scriptRefs = rendered.scriptRefs;
+    } else {
+      html = missingTemplateNoticeHtml(locale);
+    }
+  } else {
+    html = missingTemplateNoticeHtml(locale);
+  }
+} catch (error) {
+  console.error('[dashboard.astro] render failed:', error);
+  html = missingTemplateNoticeHtml(locale);
+}
+---
+
+<div
+  class="dashboard-section-slot dashboard-section-slot--bare"
+  data-dashboard-slot
+  data-use-platform-ui={clientInit.usePlatformUi ? '1' : '0'}
+  set:html={html}
+/>
+{cssUrls.map((href) => (
+  <link rel="stylesheet" href={href} data-dashboard-css />
+))}
+{scriptRefs.map((ref, index) =>
+  ref.src ? (
+    <script src={ref.src} data-dashboard-nested-init={ref.code || String(index)} />
+  ) : ref.inline ? (
+    <script is:inline data-dashboard-nested-init={ref.code || String(index)}>
+      {ref.inline}
+    </script>
+  ) : null
+)}
+
+<script>
+  import { bootDashboard } from '../../lib/dashboardBoot.client';
+
+  function runBoot() {
+    const slot = document.querySelector('[data-dashboard-slot]');
+    const usePlatformUi = slot?.getAttribute('data-use-platform-ui') !== '0';
+    if (usePlatformUi) bootDashboard();
+  }
+
+  runBoot();
+</script>

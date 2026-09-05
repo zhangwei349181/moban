@@ -1,0 +1,190 @@
+---
+import { APP_CONFIG, GT6_TENANT_ID_FALLBACK_WARN } from '../config/app';
+import { resolveEditModeForRequest } from '../lib/editMode';
+import { getTranslationByLocale } from '../lib/translations';
+import { globalDiscountFromTenant, tenantEmailVerifyEnabled } from '../lib/tenant';
+import { loadPageFrameConfig, loadLayoutComponentFrameAssets, mergeLayoutAndPageFrame, type PageFrameConfig } from '../lib/pageFrame';
+
+interface Props {
+  title?: string;
+  description?: string;
+  keywords?: string;
+  /** 当前 CMS 页面 code（home / about …），供编辑态 postMessage */
+  pageCode?: string;
+  /** 页面级框架资源（页面 metadata 的 CSS/JS / mainClass）；layout 按本页关联或 code=layout 加载 */
+  frame?: PageFrameConfig | null;
+}
+
+const {
+  title = '',
+  description = '',
+  keywords = '',
+  pageCode = '',
+  frame: frameProp = null,
+} = Astro.props;
+
+const editModeFromUrl = resolveEditModeForRequest(Astro.url);
+const htmlEditModeClass =
+  editModeFromUrl === true ? 'gt6-edit-mode' : editModeFromUrl === false ? '' : '';
+
+// 从 locals 获取当前语言和租户信息（与 middleware / APP_CONFIG.defaultLocale 一致）
+const currentLocale = Astro.locals.locale || APP_CONFIG.defaultLocale;
+const tenantId = Astro.locals.tenantId || '';
+const tenantRecord = (Astro.locals as { tenant?: unknown }).tenant ?? null;
+const globalDiscountSerialized = JSON.stringify(globalDiscountFromTenant(tenantRecord));
+const emailVerifyRequired = tenantEmailVerifyEnabled(tenantRecord);
+const languages = Astro.locals.languages || [];
+
+// 从 locals 获取货币信息
+const currencies = Astro.locals.currencies || [];
+const defaultCurrency = Astro.locals.defaultCurrency || null;
+const currentCurrency = Astro.locals.currentCurrency || null;
+const exchangeRate = Astro.locals.exchangeRate ?? 1;
+
+// 从 locals 获取全局配置
+const apiBaseUrl01 = Astro.locals.apiBaseUrl01 || '';
+const salesApiV1Base = (Astro.locals as { salesApiV1Base?: string }).salesApiV1Base || '';
+const key = Astro.locals.key || '';
+
+const gt6TenantHeaderMissing = Boolean(
+  (Astro.locals as { gt6TenantHeaderMissing?: boolean }).gt6TenantHeaderMissing
+);
+
+// 提取语言代码（例如 zh-CN -> zh）
+const htmlLang = currentLocale.split('-')[0];
+
+const gt6EditPageLabel = getTranslationByLocale(currentLocale, 'gt6_edit_page');
+const gt6EditLayoutLabel = getTranslationByLocale(currentLocale, 'gt6_edit_layout');
+const gt6AddPageLabel = getTranslationByLocale(currentLocale, 'gt6_add_page');
+const gt6AddComponentLabel = getTranslationByLocale(currentLocale, 'gt6_add_component');
+
+const resolvedTenantId = tenantId || APP_CONFIG.tenantId;
+const layoutAssets = await loadLayoutComponentFrameAssets(currentLocale, resolvedTenantId, pageCode);
+
+let pageFrame = frameProp;
+if (!pageFrame && pageCode) {
+  pageFrame = await loadPageFrameConfig(pageCode, currentLocale, resolvedTenantId);
+}
+
+const frame = mergeLayoutAndPageFrame(layoutAssets, pageFrame);
+---
+
+<!DOCTYPE html>
+<html
+  dir="ltr"
+  lang={htmlLang}
+  class={htmlEditModeClass}
+  data-gt6-page-code={pageCode}
+  data-gt6-edit-mode={editModeFromUrl === true ? '1' : editModeFromUrl === false ? '0' : ''}
+>
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content={description}>
+    <meta name="keywords" content={keywords}>
+    <meta name="generator" content={Astro.generator}>
+    <title>{title}</title>
+
+    <link rel="stylesheet" href="/assets/gt6-edit-mode.css" />
+    {
+      frame?.cssUrls.map((href) => <link rel="stylesheet" href={href} data-gt6-page-frame-css />)
+    }
+
+  <script is:inline src="/assets/gt6-edit-mode.js"></script>
+
+  
+  <!-- 注入全局变量，供客户端使用 -->
+  <script define:vars={{ 
+    currentLocale, 
+    tenantId,
+    globalDiscountSerialized,
+    emailVerifyRequired,
+    languagesJson: JSON.stringify(languages),
+    currenciesJson: JSON.stringify(currencies),
+    defaultCurrencyJson: defaultCurrency ? JSON.stringify(defaultCurrency) : 'null',
+    currentCurrencyJson: currentCurrency ? JSON.stringify(currentCurrency) : 'null',
+    exchangeRate,
+    apiBaseUrl01,
+    salesApiV1Base,
+    key
+  }}>
+    // 设置全局变量，供客户端 JavaScript 使用
+    window.__ASTRO_LOCALE__ = currentLocale;
+    window.__ASTRO_TENANT_ID__ = tenantId;
+    window.__ASTRO_EMAIL_VERIFY__ = Boolean(emailVerifyRequired);
+    try {
+      window.__ASTRO_GLOBAL_DISCOUNT__ = JSON.parse(globalDiscountSerialized);
+    } catch (e) {
+      window.__ASTRO_GLOBAL_DISCOUNT__ = { enabled: false, show_price_for_unregistered: true, level_multipliers: [], fallback_multiplier: 1 };
+    }
+    window.__ASTRO_LANGUAGES__ = JSON.parse(languagesJson);
+    window.__ASTRO_CURRENCIES__ = JSON.parse(currenciesJson);
+    window.__ASTRO_DEFAULT_CURRENCY__ = defaultCurrencyJson !== 'null' ? JSON.parse(defaultCurrencyJson) : null;
+    window.__ASTRO_CURRENT_CURRENCY__ = currentCurrencyJson !== 'null' ? JSON.parse(currentCurrencyJson) : null;
+    window.__ASTRO_EXCHANGE_RATE__ = exchangeRate;
+    window.__ASTRO_API_BASE_URL_01__ = apiBaseUrl01;
+    window.__ASTRO_SALES_API_V1_BASE__ = salesApiV1Base;
+    window.__ASTRO_KEY__ = key;
+  </script>
+  {
+    gt6TenantHeaderMissing && (
+      <script define:vars={{ warnMsg: GT6_TENANT_ID_FALLBACK_WARN }}>
+        console.warn(warnMsg);
+      </script>
+    )
+  }
+</head>
+<!-- main body -->
+<body >
+  <slot />
+
+  <div class="gt6-layout-footer-chrome" aria-hidden="true">
+    <span class="gt6-layout-footer-line" aria-hidden="true"></span>
+    <div class="gt6-layout-footer-actions">
+      <button
+        type="button"
+        class="gt6-layout-footer-btn gt6-layout-footer-btn--edit-page"
+        data-gt6-action="edit-page"
+      >
+        {gt6EditPageLabel}
+      </button>
+      <button
+        type="button"
+        class="gt6-layout-footer-btn gt6-layout-footer-btn--edit-layout"
+        data-gt6-action="edit-layout"
+      >
+        {gt6EditLayoutLabel}
+      </button>
+      <button
+        type="button"
+        class="gt6-layout-footer-btn gt6-layout-footer-btn--add-page"
+        data-gt6-action="add-page"
+      >
+        {gt6AddPageLabel}
+      </button>
+      <button
+        type="button"
+        class="gt6-layout-footer-btn gt6-layout-footer-btn--add-component"
+        data-gt6-action="add-component"
+      >
+        {gt6AddComponentLabel}
+      </button>
+    </div>
+  </div>
+
+  {
+    frame?.scripts.map((script, index) =>
+      script.src ? (
+        <script is:inline src={script.src} type={script.type} data-gt6-page-frame-script={index} />
+      ) : script.inline ? (
+        <script type={script.type || 'module'} is:inline data-gt6-page-frame-script={index}>
+          {script.inline}
+        </script>
+      ) : null
+    )
+  }
+</body>
+</html>
+
+

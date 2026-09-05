@@ -1,0 +1,51 @@
+---
+/**
+ * PageHeader 区块：面包屑 + 页标题 + 描述。
+ * 组件记录 type=pageheader 时渲染（旧租户仍可用 code=pageheader / pageheader01–99）。
+ * 展示模板壳来自 metadata 多语言 html_url（或内联 html）；没有可加载模板时显示提示。
+ * metadata.context = bloglist | product 时，联动 URL 分类/标签筛选更新标题与末级面包屑。
+ */
+import { loadPageHeaderSectionTemplate } from './resolvers/pageheader';
+import { resolveComponentsCss } from './resolvers/componentsHtml';
+import { isZhLocale, missingTemplateNoticeHtml } from './resolvers/_shared';
+import { loadPageHeaderSection } from '../../lib/pageHeaderSection';
+import { getTenantId } from '../../lib/i18n';
+import { renderPageHeaderSectionHtml } from '../../lib/pageHeaderTemplate';
+
+interface Props {
+  metadata: Record<string, unknown>;
+  locale: string;
+  seoFallback?: {
+    title: string;
+    description: string;
+    keywords: string;
+  };
+}
+
+const { metadata, locale, seoFallback } = Astro.props;
+const tenantId = getTenantId(Astro);
+const css = resolveComponentsCss(metadata, locale);
+const cssUrl = css.cssUrl;
+
+let html = '';
+try {
+  const templateShell = await loadPageHeaderSectionTemplate(metadata, locale, Astro.url);
+  if (!templateShell) {
+    html = missingTemplateNoticeHtml(locale);
+  } else {
+    const data = await loadPageHeaderSection(locale, tenantId, metadata, Astro.url, seoFallback);
+    html = renderPageHeaderSectionHtml({
+      data,
+      templateShell,
+      labels: {
+        breadcrumbAriaLabel: isZhLocale(locale) ? '面包屑导航' : 'Breadcrumb',
+      },
+    });
+  }
+} catch (error) {
+  console.error('[pageheader.astro] render failed:', error);
+}
+---
+
+<div class="pageheader-section-slot pageheader-section-slot--bare" data-pageheader-section set:html={html} />
+{cssUrl && <link rel="stylesheet" href={cssUrl} />}

@@ -1,0 +1,52 @@
+---
+import Language from './language.astro';
+import { getCurrentLocale, getTenantId } from '../../lib/i18n';
+import { fetchFooterMenuItems } from '../../lib/footerMenu';
+import { loadFooterContent } from './footer/content';
+import FooterBrand from './footer/FooterBrand.astro';
+import FooterNav from './footer/FooterNav.astro';
+
+const locale = getCurrentLocale(Astro);
+const tenantId = getTenantId(Astro);
+
+const footerContent = await loadFooterContent(locale, tenantId);
+
+let footerMenuItems: Awaited<ReturnType<typeof fetchFooterMenuItems>> = [];
+try {
+  footerMenuItems = await fetchFooterMenuItems(locale, tenantId);
+} catch (err) {
+  console.error('[footer] failed to load menu-footer:', err);
+}
+---
+
+<footer class="footer bg-background-13 relative z-0 overflow-hidden">
+  <div class="main-container px-5">
+    <div class="grid grid-cols-12 justify-between gap-x-0 gap-y-16 pb-12 pt-39">
+      <FooterBrand content={footerContent} />
+      <FooterNav items={footerMenuItems} locale={locale} />
+    </div>
+    <div
+      data-ns-animate
+      data-delay="0.7"
+      data-offset="10"
+      data-start="top 105%"
+      class="relative pt-[26px] pb-[42px]"
+    >
+      <div
+        class="bg-stroke-3 absolute top-0 right-0 left-0 mx-auto h-px origin-center"
+        aria-hidden="true"
+      >
+      </div>
+      <div
+        class="flex flex-col items-center justify-center gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6"
+      >
+        <p class="text-tagline-1 text-secondary text-center font-normal sm:text-left">
+          {footerContent.copyright}
+        </p>
+        <ul class="flex shrink-0 items-center justify-center">
+          <Language variant="light" />
+        </ul>
+      </div>
+    </div>
+  </div>
+</footer>

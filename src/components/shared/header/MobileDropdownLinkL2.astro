@@ -1,0 +1,70 @@
+---
+import type { MenuItem } from '../../../lib/menu';
+import {
+  activeMenuChildren,
+  getMenuItemLabel,
+  getMenuItemMobileLabel,
+  getMenuItemUrl,
+} from '../../../lib/headerMenu';
+import MobileMenuArrow from './MobileMenuArrow.astro';
+import MobileDropdownLinkL3 from './MobileDropdownLinkL3.astro';
+
+interface Props {
+  item: MenuItem;
+  locale: string;
+}
+
+const { item, locale } = Astro.props;
+const label = getMenuItemMobileLabel(item, locale) || getMenuItemLabel(item, locale);
+const href = getMenuItemUrl(item);
+const target = item.target && item.target !== '_self' ? item.target : undefined;
+const children = activeMenuChildren(item);
+const hasSubmenu = children.length > 0;
+const submenuId = `header-submenu-${item.id}`;
+---
+
+{
+  hasSubmenu ? (
+    <li class="mobile-submenu-item space-y-1">
+      <div class="mobile-menu-row flex items-center gap-1 pr-1">
+        <a
+          href={href}
+          target={target}
+          rel={target ? 'noopener noreferrer' : undefined}
+          class="mobile-menu-link text-tagline-3 text-secondary/80 hover:text-secondary/90 ml-4 block flex-1 py-2.5 text-left font-normal transition-colors duration-200"
+        >
+          {label}
+        </a>
+        <button
+          type="button"
+          class="mobile-menu-toggle text-secondary/70 hover:text-secondary hover:bg-secondary/5 flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-lg transition-colors"
+          data-menu={submenuId}
+          data-nested="true"
+          aria-expanded="false"
+          aria-label={`展开 ${label} 子菜单`}
+        >
+          <MobileMenuArrow />
+        </button>
+      </div>
+      <ul
+        class="mobile-submenu-l3 border-stroke-3/20 ml-8 hidden space-y-0.5 border-l pl-3"
+        data-submenu={submenuId}
+      >
+        {children.map((child) => (
+          <MobileDropdownLinkL3 item={child} locale={locale} />
+        ))}
+      </ul>
+    </li>
+  ) : (
+    <li>
+      <a
+        href={href}
+        target={target}
+        rel={target ? 'noopener noreferrer' : undefined}
+        class="mobile-submenu-link text-tagline-3 text-secondary/80 hover:text-secondary/90 ml-4 block py-2.5 text-left font-normal transition-colors duration-200 data-[selected=true]:font-medium data-[selected=true]:text-secondary"
+      >
+        {label}
+      </a>
+    </li>
+  )
+}

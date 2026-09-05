@@ -1,0 +1,26 @@
+---
+import type { MenuItem } from '../../../lib/menu';
+import { menuPanelId } from '../../../lib/headerMenu';
+import MobileNavItem from './MobileNavItem.astro';
+
+interface Props {
+  items: MenuItem[];
+  locale: string;
+}
+
+const { items, locale } = Astro.props;
+
+const firstExpandable = items.find(
+  (item) => item.item_type === 'mega_menu' || item.item_type === 'dropdown'
+);
+const defaultOpenMenuId = firstExpandable ? menuPanelId(firstExpandable) : '';
+---
+
+<ul class="space-y-2" data-default-mobile-menu={defaultOpenMenuId}>
+  {
+    items.map((item) => {
+      const isDefaultOpen = firstExpandable?.id === item.id;
+      return <MobileNavItem item={item} locale={locale} defaultOpen={isDefaultOpen} />;
+    })
+  }
+</ul>

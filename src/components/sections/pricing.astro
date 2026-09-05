@@ -1,0 +1,98 @@
+---
+/**
+ * 订阅定价区块：套餐卡片由变体数据驱动，布局由 CMS html_url 定义。
+ * 组件记录 type=pricing 时渲染（旧租户仍可用 code=pricing / pricing01–99 / subscriptionpricing）。
+ */
+import {
+  resolvePricingSectionMeta,
+  loadPricingSectionTemplate,
+  resolvePricingClientInit,
+} from './resolvers/pricing';
+import { missingTemplateNoticeHtml } from './resolvers/_shared';
+import { loadPricingSection } from '../../lib/pricingSection';
+import { renderPricingSectionHtml } from '../../lib/pricingTemplate';
+import { getTenantId } from '../../lib/i18n';
+import { getTranslationByLocale } from '../../lib/translations';
+import type { Currency } from '../../lib/currencies';
+
+interface Props {
+  metadata: Record<string, unknown>;
+  locale: string;
+}
+
+const { metadata, locale } = Astro.props;
+const tenantId = getTenantId(Astro);
+const sectionMeta = resolvePricingSectionMeta(metadata, locale);
+const clientInit = resolvePricingClientInit(metadata, locale);
+const cssUrl = clientInit.cssUrl;
+const exchangeRate = Astro.locals.exchangeRate ?? 1;
+const currentCurrency = (Astro.locals.currentCurrency ?? null) as Currency | null;
+
+let html = '';
+try {
+  const templateShell = await loadPricingSectionTemplate(metadata, locale, Astro.url);
+  if (!templateShell) {
+    html = missingTemplateNoticeHtml(locale);
+  } else {
+    const data = await loadPricingSection(metadata, {
+      locale,
+      tenantId,
+      exchangeRate,
+      currentCurrency,
+    });
+    html = renderPricingSectionHtml({
+      data,
+      templateShell,
+      labels: {
+        plansSectionTitle: getTranslationByLocale(locale, 'pricing_plans_title'),
+        plansSectionLead: getTranslationByLocale(locale, 'pricing_plans_lead'),
+        emptyMessage: getTranslationByLocale(locale, 'pricing_empty'),
+        featuredBadge: getTranslationByLocale(locale, 'pricing_featured'),
+        subscribeLabel: getTranslationByLocale(locale, 'pricing_subscribe_now'),
+        noFeaturesLine: getTranslationByLocale(locale, 'pricing_no_features'),
+        yearlyHint: getTranslationByLocale(locale, 'pricing_yearly_hint'),
+        detailSectionTitle: getTranslationByLocale(locale, 'pricing_detail_title'),
+        accordionContentTitle: getTranslationByLocale(locale, 'pricing_content_title'),
+        emptyContentMessage: getTranslationByLocale(locale, 'pricing_empty_content'),
+        accordionMetaTitle: getTranslationByLocale(locale, 'pricing_meta_title'),
+        emptyMetaMessage: getTranslationByLocale(locale, 'pricing_empty_meta'),
+      },
+      clientConfig: {
+        checkoutUrl: sectionMeta.checkoutUrl,
+      },
+    });
+  }
+} catch (error) {
+  console.error('[pricing.astro] render failed:', error);
+  html = missingTemplateNoticeHtml(locale);
+}
+---
+
+<div
+  class="pricing-section-slot pricing-section-slot--bare"
+  data-pricing-slot
+  data-use-platform-ui={clientInit.usePlatformUi ? '1' : '0'}
+  data-has-custom-init={clientInit.initScriptUrl || clientInit.initScriptInline ? '1' : '0'}
+  set:html={html}
+/>
+{cssUrl && <link rel="stylesheet" href={cssUrl} />}
+{clientInit.initScriptUrl && (
+  <script src={clientInit.initScriptUrl} data-pricing-custom-init="url" />
+)}
+{clientInit.initScriptInline && (
+  <script is:inline data-pricing-custom-init="inline">
+    {clientInit.initScriptInline}
+  </script>
+)}
+
+<script>
+  import { bootPricing } from '../../lib/pricingBoot.client';
+
+  function runBoot() {
+    const slot = document.querySelector('[data-pricing-slot]');
+    const usePlatformUi = slot?.getAttribute('data-use-platform-ui') !== '0';
+    bootPricing({ usePlatformUi });
+  }
+
+  runBoot();
+</script>

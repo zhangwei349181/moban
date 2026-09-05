@@ -1,0 +1,72 @@
+---
+/**
+ * 订阅结账区块：布局由 CMS html_url 定义，逻辑由 subscriptionCheckoutUi.client 处理。
+ * 组件记录 type=subscriptioncheckout 时渲染（旧租户仍可用 code=subscriptioncheckout / subscriptioncheckoutpage）。
+ */
+import {
+  resolveSubscriptionCheckoutSectionMeta,
+  loadSubscriptionCheckoutSectionTemplate,
+} from './resolvers/subscriptionCheckout';
+import { missingTemplateNoticeHtml } from './resolvers/_shared';
+import { renderSubscriptionCheckoutSectionHtml } from '../../lib/subscriptionCheckoutTemplate';
+import { resolveCommerceClientInit } from '../../lib/commerceInit';
+
+interface Props {
+  metadata: Record<string, unknown>;
+  locale: string;
+}
+
+const { metadata, locale } = Astro.props;
+const sectionMeta = resolveSubscriptionCheckoutSectionMeta(metadata, locale);
+const clientInit = resolveCommerceClientInit(metadata, locale);
+const cssUrl = clientInit.cssUrl;
+
+let html = '';
+try {
+  const templateShell = await loadSubscriptionCheckoutSectionTemplate(metadata, locale, Astro.url);
+  html = templateShell
+    ? renderSubscriptionCheckoutSectionHtml({
+        meta: sectionMeta,
+        templateShell,
+        clientConfig: {
+          loginUrl: sectionMeta.loginUrl,
+          shopUrl: sectionMeta.shopUrl,
+          addressesUrl: sectionMeta.addressesUrl,
+          successReturnPath: sectionMeta.successReturnPath,
+          cancelReturnPath: sectionMeta.cancelReturnPath,
+        },
+      })
+    : missingTemplateNoticeHtml(locale);
+} catch (error) {
+  console.error('[subscriptionCheckout.astro] render failed:', error);
+}
+---
+
+<div
+  class="subscription-checkout-section-slot subscription-checkout-section-slot--bare"
+  data-subscription-checkout-slot
+  data-use-platform-ui={clientInit.usePlatformUi ? '1' : '0'}
+  data-has-custom-init={clientInit.initScriptUrl || clientInit.initScriptInline ? '1' : '0'}
+  set:html={html}
+/>
+{cssUrl && <link rel="stylesheet" href={cssUrl} />}
+{clientInit.initScriptUrl && (
+  <script src={clientInit.initScriptUrl} data-subscription-checkout-custom-init="url" />
+)}
+{clientInit.initScriptInline && (
+  <script is:inline data-subscription-checkout-custom-init="inline">
+    {clientInit.initScriptInline}
+  </script>
+)}
+
+<script>
+  import { bootSubscriptionCheckout } from '../../lib/subscriptionCheckoutBoot.client';
+
+  function runBoot() {
+    const slot = document.querySelector('[data-subscription-checkout-slot]');
+    const usePlatformUi = slot?.getAttribute('data-use-platform-ui') !== '0';
+    bootSubscriptionCheckout({ usePlatformUi });
+  }
+
+  runBoot();
+</script>

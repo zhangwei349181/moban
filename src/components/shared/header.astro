@@ -1,0 +1,113 @@
+---
+import { getCurrentLocale, getTenantId } from '../../lib/i18n';
+import { fetchHeaderMenuItems } from '../../lib/headerMenu';
+import { loadHeaderContent } from './header/content';
+import HeaderCtaButton from './header/HeaderCtaButton.astro';
+import HeaderNavDesktop from './header/HeaderNavDesktop.astro';
+import HeaderNavMobile from './header/HeaderNavMobile.astro';
+
+const locale = getCurrentLocale(Astro);
+const tenantId = getTenantId(Astro);
+
+const headerContent = await loadHeaderContent(locale, tenantId);
+
+let headerMenuItems: Awaited<ReturnType<typeof fetchHeaderMenuItems>> = [];
+try {
+  headerMenuItems = await fetchHeaderMenuItems(locale, tenantId);
+} catch (err) {
+  console.error('[header] failed to load menu-header:', err);
+}
+---
+
+<header>
+  <div
+    class="header-scroll lp:max-w-[1290px]! has-top-nav {=$class} fixed top-5 left-1/2 z-50 mx-auto flex w-full max-w-[350px] -translate-x-1/2 items-center justify-between rounded-full bg-white px-2.5 py-2.5 opacity-0 backdrop-blur-[25px] min-[425px]:max-w-[375px] min-[500px]:max-w-[450px] sm:max-w-[540px] md:max-w-[720px] lg:max-w-[960px] xl:max-w-[1140px] xl:py-0"
+    data-ns-animate
+    data-direction="up"
+    data-offset="100"
+  >
+    <div>
+      <a href={headerContent.logo.href}>
+        <span class="sr-only">{headerContent.logo.srOnly}</span>
+        <figure class="hidden lg:block lg:max-w-[198px]">
+          <img
+            src={headerContent.logo.desktop.image}
+            alt={headerContent.logo.desktop.alt}
+            class="w-full"
+          />
+        </figure>
+        <figure class="block max-w-[44px] lg:hidden">
+          <img
+            src={headerContent.logo.mobile.image}
+            alt={headerContent.logo.mobile.alt}
+            class="block w-full"
+          />
+          {
+            headerContent.logo.mobile.darkImage && (
+              <img
+                src={headerContent.logo.mobile.darkImage}
+                alt={headerContent.logo.mobile.alt}
+                class="hidden w-full"
+              />
+            )
+          }
+        </figure>
+      </a>
+    </div>
+    <nav class="hidden items-center xl:flex">
+      <ul class="flex items-center">
+        <HeaderNavDesktop items={headerMenuItems} locale={locale} />
+      </ul>
+    </nav>
+
+    <div class="hidden items-center justify-center xl:flex">
+      <HeaderCtaButton
+        href={headerContent.cta.href}
+        ariaLabel={headerContent.cta.ariaLabel}
+        text={headerContent.cta.text}
+        showIcon={headerContent.cta.showIcon}
+      />
+    </div>
+    <div class="block xl:hidden">
+      <button
+        type="button"
+        class="nav-hamburger bg-background-4 flex size-12 cursor-pointer flex-col items-center justify-center gap-[5px] rounded-full"
+      >
+        <span class="sr-only">Menu</span>
+        <span class="bg-stroke-9 block h-0.5 w-6"></span>
+        <span class="bg-stroke-9 block h-0.5 w-6"></span>
+        <span class="bg-stroke-9 block h-0.5 w-6"></span>
+      </button>
+    </div>
+  </div>
+
+  <aside
+    class="sidebar scroll-bar border-stroke-3/18 fixed top-0 right-0 z-9999 h-screen w-full translate-x-full border-l bg-white transition-all duration-300 sm:w-1/2 sm:rounded-l-xl xl:hidden"
+  >
+    <div class="space-y-4 p-5 sm:p-8 lg:p-9">
+      <div class="flex items-center justify-between">
+        <a href={headerContent.logo.href}>
+          <span class="sr-only">{headerContent.logo.srOnly}</span>
+          <figure class="max-w-[44px]">
+            <img
+              src={headerContent.logo.sidebar.image}
+              alt={headerContent.logo.sidebar.alt}
+              class="block w-full"
+            />
+          </figure>
+        </a>
+        <button
+          type="button"
+          class="nav-hamburger-close bg-secondary/10 hover:bg-secondary/20 relative flex size-10 cursor-pointer flex-col items-center justify-center gap-1.5 rounded-full transition-colors duration-200"
+        >
+          <span class="sr-only">Close Menu</span>
+          <span class="bg-secondary absolute block h-0.5 w-4 rotate-45"></span>
+          <span class="bg-secondary absolute block h-0.5 w-4 -rotate-45"></span>
+        </button>
+      </div>
+      <div class="scroll-bar mt-6 h-[85vh] w-full overflow-x-hidden overflow-y-auto pb-10">
+        <HeaderNavMobile items={headerMenuItems} locale={locale} />
+      </div>
+    </div>
+  </aside>
+</header>

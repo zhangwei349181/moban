@@ -1,0 +1,109 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import PageComponents from './PageComponents.astro';
+import PageComponentSlotView from './PageComponentSlot.astro';
+
+import type { ListPageModel } from '../../lib/listPage';
+
+interface Props {
+  model: ListPageModel;
+}
+
+const { model } = Astro.props;
+const {
+  pageCode,
+  locale,
+  cms,
+  defaults,
+  headerSlots,
+  pageheaderSlots,
+  listfilterSlots,
+  postlistSlots,
+  bodySlots,
+  footerSlots,
+  pageHeaderSeoFallback,
+  pageHeaderData,
+} = model;
+
+const pageheaderSlotsWithDefaults = pageheaderSlots.map((slot) => ({
+  ...slot,
+  effectiveMetadata: { ...defaults.pageHeaderMeta, ...slot.effectiveMetadata },
+}));
+const listfilterSlotsWithDefaults = listfilterSlots.map((slot) => ({
+  ...slot,
+  effectiveMetadata: { ...defaults.listFilterMeta, ...slot.effectiveMetadata },
+}));
+const postlistSlotsWithDefaults = postlistSlots.map((slot) => ({
+  ...slot,
+  effectiveMetadata: { ...defaults.postListMeta, ...slot.effectiveMetadata },
+}));
+const listMainClass =
+  pageheaderSlotsWithDefaults.length > 0
+    ? 'gt6-list-main gt6-list-main--after-header'
+    : 'gt6-list-main';
+---
+
+<Layout
+  title={pageHeaderData.title}
+  description={pageHeaderData.description || pageHeaderData.title}
+  keywords={pageHeaderData.keywords}
+  pageCode={pageCode}
+  frame={cms.frame}
+>
+  {headerSlots.length > 0 && (
+    <PageComponents slots={headerSlots} locale={locale} pageCode={pageCode} />
+  )}
+  <main class={cms.frame.mainClass}>
+    {
+      pageheaderSlotsWithDefaults.length > 0 &&
+        pageheaderSlotsWithDefaults.map((slot) => (
+          <PageComponentSlotView
+            pageSlot={slot}
+            locale={locale}
+            pageCode={pageCode}
+            pageHeaderSeoFallback={pageHeaderSeoFallback}
+          />
+        ))
+    }
+
+    {
+      (listfilterSlotsWithDefaults.length > 0 || postlistSlotsWithDefaults.length > 0) && (
+        <div class={listMainClass}>
+          {listfilterSlotsWithDefaults.map((slot) => (
+            <PageComponentSlotView pageSlot={slot} locale={locale} pageCode={pageCode} />
+          ))}
+          {postlistSlotsWithDefaults.map((slot) => (
+            <PageComponentSlotView pageSlot={slot} locale={locale} pageCode={pageCode} />
+          ))}
+        </div>
+      )
+    }
+    <PageComponents slots={bodySlots} locale={locale} pageCode={pageCode} />
+  </main>
+  {footerSlots.length > 0 && (
+    <PageComponents slots={footerSlots} locale={locale} pageCode={pageCode} />
+  )}
+
+</Layout>
+
+<style is:global>
+  .gt6-list-main {
+    display: grid;
+    gap: var(--space-6);
+    width: 100%;
+    max-width: var(--list-max);
+    margin-inline: auto;
+    padding: var(--section-y) var(--page-pad);
+  }
+
+  .gt6-list-main--after-header {
+    padding-top: var(--space-5);
+  }
+
+  @media (min-width: 1024px) {
+    .gt6-list-main {
+      grid-template-columns: minmax(14rem, 17rem) minmax(0, 1fr);
+      align-items: start;
+    }
+  }
+</style>

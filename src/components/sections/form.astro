@@ -1,0 +1,80 @@
+---
+/**
+ * 动态表单区块：字段由模板 API 驱动，布局由 CMS html_url 定义。
+ * 组件记录 type=form 时渲染（旧租户仍可用 code=form / contactform / dynamicform）。
+ */
+import { resolveFormSectionMeta, loadFormSectionTemplate } from './resolvers/form';
+import { missingTemplateNoticeHtml } from './resolvers/_shared';
+import { loadFormSectionViewModel } from '../../lib/formSection';
+import { renderFormSectionHtml } from '../../lib/formTemplate';
+import { resolveFormClientInit } from '../../lib/formInit';
+import { getTenantId } from '../../lib/i18n';
+import { getTranslationByLocale } from '../../lib/translations';
+
+interface Props {
+  metadata: Record<string, unknown>;
+  locale: string;
+}
+
+const { metadata, locale } = Astro.props;
+const tenantId = getTenantId(Astro);
+const sectionMeta = resolveFormSectionMeta(metadata, locale);
+const clientInit = resolveFormClientInit(metadata, locale);
+const cssUrl = clientInit.cssUrl;
+
+const pendingMessage = getTranslationByLocale(locale, 'form_pending_setup');
+const clientI18n = {
+  submit: sectionMeta.submitLabel || getTranslationByLocale(locale, 'submit'),
+  submitting: getTranslationByLocale(locale, 'submitting'),
+  submitSuccess: getTranslationByLocale(locale, 'submit_success'),
+  submitErrorRequired: getTranslationByLocale(locale, 'submit_error_required'),
+  uploading: getTranslationByLocale(locale, 'uploading'),
+};
+
+let html = '';
+try {
+  const templateShell = await loadFormSectionTemplate(metadata, locale, Astro.url);
+  if (!templateShell) {
+    html = missingTemplateNoticeHtml(locale);
+  } else {
+    const vm = await loadFormSectionViewModel(sectionMeta, locale, tenantId);
+    html = renderFormSectionHtml({
+      vm,
+      templateShell,
+      pendingMessage,
+      clientI18nJson: JSON.stringify(clientI18n),
+    });
+  }
+} catch (error) {
+  console.error('[form.astro] render failed:', error);
+}
+---
+
+<div
+  class="form-section-slot form-section-slot--bare"
+  data-form-slot
+  data-has-custom-init={clientInit.initScriptUrl || clientInit.initScriptInline ? '1' : '0'}
+  set:html={html}
+/>
+{cssUrl && <link rel="stylesheet" href={cssUrl} />}
+{clientInit.initScriptUrl && (
+  <script src={clientInit.initScriptUrl} data-form-custom-init="url" />
+)}
+{clientInit.initScriptInline && (
+  <script is:inline data-form-custom-init="inline">
+    {clientInit.initScriptInline}
+  </script>
+)}
+
+<script>
+  import { initDynamicFormSections } from '../../lib/formSection.client';
+
+  function setupDynamicForms() {
+    if (document.querySelector('[data-dynamic-form]')) {
+      initDynamicFormSections();
+    }
+  }
+
+  setupDynamicForms();
+  document.addEventListener('astro:page-load', setupDynamicForms);
+</script>

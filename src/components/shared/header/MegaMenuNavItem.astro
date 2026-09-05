@@ -1,0 +1,65 @@
+---
+import type { MenuItem } from '../../../lib/menu';
+import {
+  activeMenuChildren,
+  getMenuItemHtmlContent,
+  getMenuItemLabel,
+  getMenuItemUrl,
+  menuPanelId,
+  splitMegaMenuChildren,
+} from '../../../lib/headerMenu';
+import NavArrow from './NavArrow.astro';
+import MegaMenuLink from './MegaMenuLink.astro';
+
+interface Props {
+  item: MenuItem;
+  locale: string;
+}
+
+const { item, locale } = Astro.props;
+const label = getMenuItemLabel(item, locale);
+const href = getMenuItemUrl(item);
+const panelId = menuPanelId(item);
+const children = activeMenuChildren(item);
+const columnCount = item.mega_menu_columns || 3;
+const columns = splitMegaMenuChildren(children, columnCount, item.mega_menu_width);
+const htmlContent = getMenuItemHtmlContent(item, locale);
+const target = item.target && item.target !== '_self' ? item.target : undefined;
+---
+
+<li class="nav-item relative cursor-pointer py-2.5" data-menu={panelId}>
+  <a
+    href={href}
+    target={target}
+    rel={target ? 'noopener noreferrer' : undefined}
+    class="hover:border-stroke-2 text-tagline-1 text-secondary/60 hover:text-secondary flex items-center gap-1 rounded-full border border-transparent px-4 py-2 font-normal transition-all duration-200"
+  >
+    <span>{label}</span>
+    <NavArrow />
+  </a>
+  <div>
+    <div
+      class="dropdown-menu-bridge pointer-events-none fixed top-full left-1/2 z-40 h-3 w-full -translate-x-1/2 bg-transparent opacity-0 lg:w-[946px]"
+    >
+    </div>
+    <div
+      id={panelId}
+      class="dropdown-menu border-stroke-1 pointer-events-none fixed top-full left-1/2 z-50 mt-2 flex w-full -translate-x-1/2 items-start gap-y-6 rounded-[20px] border bg-white p-4 opacity-0 transition-all duration-300 md:gap-x-6 lg:w-[946px]"
+    >
+      {
+        columns.map((colItems, colIndex) => (
+          <div class="flex-1 space-y-3">
+            <ul class="space-y-2">
+              {colItems.map((child) => (
+                <MegaMenuLink item={child} locale={locale} />
+              ))}
+            </ul>
+            {colIndex === columns.length - 1 && htmlContent && (
+              <div set:html={htmlContent} />
+            )}
+          </div>
+        ))
+      }
+    </div>
+  </div>
+</li>

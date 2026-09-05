@@ -1,0 +1,196 @@
+---
+import type { BlogListViewModel } from '../../lib/articleList';
+
+interface Props {
+  view: BlogListViewModel;
+}
+
+const { view } = Astro.props;
+const showPagination = view.totalPages > 1;
+---
+
+<section class="article-list-section bg-background-1 pb-14 md:pb-20 lg:pb-24 dark:bg-background-8">
+  <div class="main-container">
+    {
+      view.filters.length > 0 && (
+        <nav
+          class="mb-8 flex flex-wrap justify-center gap-2 md:mb-10 lg:justify-start"
+          aria-label="Filter"
+        >
+          {view.filters.map((item) => (
+            <a
+              href={item.href}
+              class:list={[
+                'text-tagline-3 rounded-full border px-4 py-2 font-normal transition-colors',
+                item.active
+                  ? 'border-secondary bg-secondary text-white'
+                  : 'border-stroke-1 bg-background-1 text-secondary/70 hover:border-primary-500/40 hover:text-secondary dark:border-stroke-7 dark:bg-background-7 dark:text-accent/70 dark:hover:text-accent',
+              ]}
+            >
+              {item.name}
+            </a>
+          ))}
+        </nav>
+      )
+    }
+
+    {
+      view.error && (
+        <p class="text-tagline-2 text-ns-red py-16 text-center font-normal">
+          {view.labels.error}
+        </p>
+      )
+    }
+
+    {
+      !view.error && view.empty && (
+        <p class="text-tagline-2 py-16 text-center text-secondary/60 dark:text-accent/60">
+          {view.labels.empty}
+        </p>
+      )
+    }
+
+    {
+      !view.error && view.posts.length > 0 && (
+        <div class="grid grid-cols-1 gap-8 lg:grid-cols-3">
+          {view.posts.map((post, index) => (
+            <article
+              class="group underline-hover-effect h-auto space-y-4"
+              data-ns-animate
+              data-delay={String(0.1 + index * 0.05)}
+            >
+              <figure
+                class:list={[
+                  'relative w-full overflow-hidden rounded-lg bg-background-3',
+                  index % 3 === 0 ? 'h-[420px]' : 'h-[320px]',
+                ]}
+              >
+                {
+                  post.image ? (
+                    <a href={post.href} class="block h-full w-full">
+                      <img
+                        src={post.image}
+                        alt={post.imageAlt}
+                        class="h-full w-full object-cover transition-all duration-500 group-hover:scale-105"
+                        loading="lazy"
+                      />
+                    </a>
+                  ) : (
+                    <a
+                      href={post.href}
+                      class="flex h-full w-full items-center justify-center text-secondary/30"
+                      aria-label={post.title}
+                    >
+                      <span class="text-tagline-1">—</span>
+                    </a>
+                  )
+                }
+                {
+                  post.badge && (
+                    <span class="bg-ns-green text-secondary text-tagline-4 absolute top-3 left-3 rounded-sm px-2 py-1 font-normal">
+                      {post.badge}
+                    </span>
+                  )
+                }
+              </figure>
+              <div class="px-3">
+                <time
+                  datetime={post.datetime}
+                  class="text-tagline-3 flex flex-wrap items-center gap-x-2 text-secondary/80"
+                >
+                  {post.date}
+                  {post.authorName && <span>{post.authorName}</span>}
+                </time>
+                <a href={post.href} class="block pt-2">
+                  <h3 class="title text-heading-4 line-clamp-2 text-secondary/80 dark:text-accent/80">
+                    {post.title}
+                  </h3>
+                </a>
+                <a
+                  href={post.href}
+                  class="text-tagline-3 mt-2 inline-flex items-center gap-1 text-secondary/70 transition-colors hover:text-secondary"
+                >
+                  {view.labels.readMore}
+                  <span aria-hidden="true">→</span>
+                </a>
+              </div>
+            </article>
+          ))}
+        </div>
+      )
+    }
+
+    {
+      showPagination && !view.error && (
+        <nav class="mt-12 flex justify-center" aria-label="Pagination">
+          <ul class="flex flex-wrap items-center justify-center gap-1">
+            <li>
+              {
+                view.prevHref ? (
+                  <a
+                    href={view.prevHref}
+                    class="text-tagline-3 flex size-10 items-center justify-center rounded-lg border border-stroke-1 bg-background-1 text-secondary/70 transition-colors hover:text-secondary dark:border-stroke-7 dark:bg-background-7 dark:text-accent/70 dark:hover:text-accent"
+                    aria-label={view.labels.prev}
+                  >
+                    ‹
+                  </a>
+                ) : (
+                  <span
+                    class="text-tagline-3 flex size-10 cursor-not-allowed items-center justify-center rounded-lg border border-stroke-1 bg-background-3 text-secondary/30"
+                    aria-hidden="true"
+                  >
+                    ‹
+                  </span>
+                )
+              }
+            </li>
+            {
+              view.pageLinks.map((link) =>
+                link.ellipsis ? (
+                  <li>
+                    <span class="flex size-10 items-center justify-center text-secondary/40">…</span>
+                  </li>
+                ) : (
+                  <li>
+                    <a
+                      href={link.href}
+                      class:list={[
+                        'text-tagline-3 flex size-10 items-center justify-center rounded-lg border transition-colors',
+                        link.active
+                          ? 'border-secondary bg-secondary text-white'
+                          : 'border-stroke-1 bg-background-1 text-secondary/70 hover:text-secondary dark:border-stroke-7 dark:bg-background-7 dark:text-accent/70 dark:hover:text-accent',
+                      ]}
+                      aria-current={link.active ? 'page' : undefined}
+                    >
+                      {link.page}
+                    </a>
+                  </li>
+                )
+              )
+            }
+            <li>
+              {
+                view.nextHref ? (
+                  <a
+                    href={view.nextHref}
+                    class="text-tagline-3 flex size-10 items-center justify-center rounded-lg border border-stroke-1 bg-background-1 text-secondary/70 transition-colors hover:text-secondary dark:border-stroke-7 dark:bg-background-7 dark:text-accent/70 dark:hover:text-accent"
+                    aria-label={view.labels.next}
+                  >
+                    ›
+                  </a>
+                ) : (
+                  <span
+                    class="text-tagline-3 flex size-10 cursor-not-allowed items-center justify-center rounded-lg border border-stroke-1 bg-background-3 text-secondary/30"
+                    aria-hidden="true"
+                  >
+                    ›
+                  </span>
+                )
+              }
+            </li>
+          </ul>
+        </nav>
+      )
+    }
+  </div>
+</section>

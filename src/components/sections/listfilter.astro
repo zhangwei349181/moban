@@ -1,0 +1,86 @@
+---
+/**
+ * ListFilter 筛选区块：分类、标签、属性、价格范围；布局由 CMS html_url 模板定义。
+ * 组件记录 type=listfilter 时渲染（旧租户仍可用 code=listfilter / listfilter01–99）。
+ * 与 postlist 共用 URL 查询参数，GET 表单提交后服务端筛选。
+ */
+import {
+  loadListFilterSectionTemplate,
+  resolveListFilterClientInit,
+} from './resolvers/listfilter';
+import { isZhLocale, missingTemplateNoticeHtml } from './resolvers/_shared';
+import { loadListFilterSection } from '../../lib/listFilterSection';
+import { getTenantId } from '../../lib/i18n';
+import { renderListFilterSectionHtml } from '../../lib/listFilterTemplate';
+
+interface Props {
+  metadata: Record<string, unknown>;
+  locale: string;
+}
+
+const { metadata, locale } = Astro.props;
+const tenantId = getTenantId(Astro);
+const zh = isZhLocale(locale);
+const clientInit = resolveListFilterClientInit(metadata, locale);
+const cssUrl = clientInit.cssUrl;
+const listPath = String(
+  metadata.list_path ?? metadata.listPath ?? metadata.base_path ?? metadata.basePath ?? '/bloglist'
+).trim();
+
+let html = '';
+try {
+  const templateShell = await loadListFilterSectionTemplate(metadata, locale, Astro.url);
+  if (!templateShell) {
+    html = missingTemplateNoticeHtml(locale);
+  } else {
+    const data = await loadListFilterSection(locale, tenantId, metadata, Astro.url);
+    html = renderListFilterSectionHtml({
+      data,
+      templateShell,
+      labels: {
+        categoriesTitle: zh ? '分类' : 'Categories',
+        tagsTitle: zh ? '标签' : 'Tags',
+        attributesTitle: zh ? '属性' : 'Attributes',
+        priceTitle: zh ? '价格范围' : 'Price range',
+        priceMinLabel: zh ? '最低价' : 'Min',
+        priceMaxLabel: zh ? '最高价' : 'Max',
+        applyLabel: zh ? '应用筛选' : 'Apply filters',
+        clearLabel: zh ? '清除筛选' : 'Clear all',
+        filterAriaLabel: zh ? '列表筛选' : 'List filters',
+      },
+    });
+  }
+} catch (error) {
+  console.error('[listfilter.astro] render failed:', error);
+}
+---
+
+<div
+  class="listfilter-section-slot listfilter-section-slot--bare"
+  data-listfilter-slot
+  data-list-path={listPath}
+  data-use-platform-ui={clientInit.usePlatformUi ? '1' : '0'}
+  data-has-custom-init={clientInit.initScriptUrl || clientInit.initScriptInline ? '1' : '0'}
+  set:html={html}
+/>
+{cssUrl && <link rel="stylesheet" href={cssUrl} />}
+{clientInit.initScriptUrl && (
+  <script src={clientInit.initScriptUrl} data-listfilter-custom-init="url" />
+)}
+{clientInit.initScriptInline && (
+  <script is:inline data-listfilter-custom-init="inline">
+    {clientInit.initScriptInline}
+  </script>
+)}
+
+<script>
+  import { bootListFilter } from '../../lib/listFilterBoot.client';
+
+  function runBoot() {
+    const slot = document.querySelector('[data-listfilter-slot]');
+    const usePlatformUi = slot?.getAttribute('data-use-platform-ui') !== '0';
+    bootListFilter({ usePlatformUi });
+  }
+
+  runBoot();
+</script>

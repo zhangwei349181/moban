@@ -1,0 +1,17 @@
+---
+import type { MenuItem } from '../../../lib/menu';
+import HeaderNavItem from './HeaderNavItem.astro';
+
+interface Props {
+  items: MenuItem[];
+  locale: string;
+}
+
+const { items, locale } = Astro.props;
+---
+
+{
+  items.map((item) => (
+    <HeaderNavItem item={item} locale={locale} />
+  ))
+}

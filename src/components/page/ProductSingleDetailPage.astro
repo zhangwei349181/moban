@@ -1,0 +1,81 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import PageComponents from './PageComponents.astro';
+import PageComponentSlotView from './PageComponentSlot.astro';
+
+import { createFallbackPageComponentSlot } from '../../lib/pageComponents';
+import {
+  DEFAULT_PRODUCT_PAGEHEADER_METADATA,
+  DEFAULT_PRODUCTSINGLE_METADATA,
+  type ProductSingleDetailPageModel,
+} from '../../lib/productSingleDetailPage';
+
+interface Props {
+  model: ProductSingleDetailPageModel;
+}
+
+const { model } = Astro.props;
+const {
+  pageCode,
+  articleId,
+  locale,
+  view,
+  cms,
+  headerSlots,
+  pageheaderSlots,
+  productsingleSlots,
+  bodySlots,
+  footerSlots,
+  pageHeaderSeoFallback,
+} = model;
+
+const pageheaderRenderSlots =
+  pageheaderSlots.length > 0
+    ? pageheaderSlots
+    : [createFallbackPageComponentSlot('pageheader', DEFAULT_PRODUCT_PAGEHEADER_METADATA, 'pageheader')];
+
+const productsingleRenderSlots =
+  productsingleSlots.length > 0
+    ? [productsingleSlots[0]]
+    : [createFallbackPageComponentSlot('productsingle', DEFAULT_PRODUCTSINGLE_METADATA, 'productsingle')];
+---
+
+<Layout
+  title={view.metaTitle}
+  description={view.description}
+  pageCode={pageCode}
+  frame={cms.frame}
+  {...view.keywords ? { keywords: view.keywords } : {}}
+>
+  {headerSlots.length > 0 && (
+    <PageComponents slots={headerSlots} locale={locale} pageCode={pageCode} />
+  )}
+  <main class={cms.frame.mainClass}>
+    {
+      pageheaderRenderSlots.map((slot) => (
+        <PageComponentSlotView
+          pageSlot={slot}
+          locale={locale}
+          pageCode={pageCode}
+          pageHeaderSeoFallback={pageHeaderSeoFallback}
+        />
+      ))
+    }
+
+    {
+      productsingleRenderSlots.map((slot) => (
+        <PageComponentSlotView
+          pageSlot={slot}
+          locale={locale}
+          pageCode={pageCode}
+          articleId={articleId}
+        />
+      ))
+    }
+    <PageComponents slots={bodySlots} locale={locale} pageCode={pageCode} articleId={articleId} />
+  </main>
+  {footerSlots.length > 0 && (
+    <PageComponents slots={footerSlots} locale={locale} pageCode={pageCode} />
+  )}
+
+</Layout>

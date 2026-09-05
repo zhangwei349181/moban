@@ -1,0 +1,25 @@
+---
+import type { MenuItem } from '../../../lib/menu';
+import { getMenuItemLabel, getMenuItemMobileLabel, getMenuItemUrl } from '../../../lib/headerMenu';
+
+interface Props {
+  item: MenuItem;
+  locale: string;
+}
+
+const { item, locale } = Astro.props;
+const label = getMenuItemMobileLabel(item, locale) || getMenuItemLabel(item, locale);
+const href = getMenuItemUrl(item);
+const target = item.target && item.target !== '_self' ? item.target : undefined;
+---
+
+<li>
+  <a
+    href={href}
+    target={target}
+    rel={target ? 'noopener noreferrer' : undefined}
+    class="mobile-submenu-link text-tagline-3 text-secondary/80 hover:text-secondary/90 ml-4 block py-2.5 text-left font-normal transition-colors duration-200 data-[selected=true]:font-medium data-[selected=true]:text-secondary"
+  >
+    {label}
+  </a>
+</li>

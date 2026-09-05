@@ -1,0 +1,140 @@
+---
+import FormField from '../../sections/FormField.astro';
+import { getCurrentLocale, getTenantId } from '../../../lib/i18n';
+import { getTranslationByLocale } from '../../../lib/translations';
+import { loadSubscribeViewModel } from './subscribeContent';
+
+const locale = getCurrentLocale(Astro);
+const tenantId = getTenantId(Astro);
+const vm = await loadSubscribeViewModel(locale, tenantId);
+const { meta } = vm;
+
+const clientI18n = {
+  submit: meta.buttonText || getTranslationByLocale(locale, 'subscribe'),
+  submitting: getTranslationByLocale(locale, 'submitting'),
+  submitSuccess: getTranslationByLocale(locale, 'submit_success'),
+  submitErrorRequired: getTranslationByLocale(locale, 'submit_error_required'),
+  uploading: getTranslationByLocale(locale, 'uploading'),
+  unavailable: getTranslationByLocale(locale, 'subscribe_unavailable'),
+};
+
+const templateId = vm.status === 'ready' ? meta.templateId : '';
+---
+
+<div class="space-y-3">
+  <form
+    data-dynamic-form
+    data-template-id={templateId}
+    data-form-type={meta.formType}
+    data-form-i18n={JSON.stringify(clientI18n)}
+    class="mx-auto w-full max-w-[550px] space-y-[9px] lg:mx-0 lg:max-w-full"
+    novalidate
+  >
+    {
+      vm.status === 'ready' ? (
+        vm.fields.map((field) => <FormField field={field} variant="footer" />)
+      ) : (
+        <fieldset>
+          <input
+            type="email"
+            disabled
+            aria-label={meta.emailPlaceholder}
+            placeholder={meta.emailPlaceholder}
+            class="border-stroke-3/30 bg-background-6 placeholder:text-tagline-3 text-background-8 text-tagline-3 block h-13 w-full cursor-not-allowed rounded-md border px-3 py-[11px] font-normal opacity-60 placeholder:font-normal placeholder:text-white/60"
+          />
+        </fieldset>
+      )
+    }
+
+    <div
+      data-form-message
+      hidden
+      class="font-inter-tight text-tagline-4 rounded-md px-3 py-2 font-normal"
+      role="alert"
+    />
+
+    <div class="w-full">
+      <button type="submit" data-form-submit class="w-full" aria-label={meta.buttonText}>
+        <div
+          class="bg-background-7! text-background-13! rounded-md! bg-background-4 group/submit-button-v2 font-ibm-plex-mono text-tagline-2 text-background-11 h-full max-h-[52px] w-full shrink-0 cursor-pointer rounded-2xl stroke-0 p-1 font-normal first-letter:uppercase disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <div class="flex items-center gap-x-4">
+            <div
+              class="!rounded-sm relative z-20 h-11 w-[60px] overflow-hidden rounded-[13px]"
+              aria-hidden="true"
+            >
+              <div
+                class="!rounded-sm absolute inset-0 z-10 size-full overflow-hidden bg-linear-to-r from-[#ffffff00] from-0% to-[#000000] to-100%"
+                aria-hidden="true"
+              >
+                <div
+                  class="bg-opai-purple !rounded-sm absolute z-20 flex size-full items-center justify-center overflow-hidden"
+                  style="box-shadow: 0 3px 10px 0 rgba(255, 255, 255, 0.4) inset"
+                >
+                  <span
+                    class="relative flex size-6 items-center justify-center overflow-hidden"
+                    aria-hidden="true"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 14 14"
+                      class="absolute size-[14px] translate-x-0 fill-white/80 transition-all duration-500 ease-in-out group-hover/submit-button-v2:translate-x-[140%]"
+                    >
+                      <path d="M6 0H8V2H6V0Z" />
+                      <path d="M0 0H2V2H0V0Z" />
+                      <path d="M9 3H11V5H9V3Z" />
+                      <path d="M3 3H5V5H3V3Z" />
+                      <path d="M12 6H14V8H12V6Z" />
+                      <path d="M6 6H8V8H6V6Z" />
+                      <path d="M9 9H11V11H9V9Z" />
+                      <path d="M3 9H5V11H3V9Z" />
+                      <path d="M6 12H8V14H6V12Z" />
+                      <path d="M0 12H2V14H0V12Z" />
+                    </svg>
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 14 14"
+                      class="absolute size-[14px] -translate-x-[140%] fill-white/80 transition-all duration-500 ease-in-out group-hover/submit-button-v2:translate-x-0"
+                    >
+                      <path d="M6 0H8V2H6V0Z" />
+                      <path d="M0 0H2V2H0V0Z" />
+                      <path d="M9 3H11V5H9V3Z" />
+                      <path d="M3 3H5V5H3V3Z" />
+                      <path d="M12 6H14V8H12V6Z" />
+                      <path d="M6 6H8V8H6V6Z" />
+                      <path d="M9 9H11V11H9V9Z" />
+                      <path d="M3 9H5V11H3V9Z" />
+                      <path d="M6 12H8V14H6V12Z" />
+                      <path d="M0 12H2V14H0V12Z" />
+                    </svg>
+                  </span>
+                </div>
+              </div>
+            </div>
+            <span class="pr-5" aria-hidden="true">{meta.buttonText}</span>
+          </div>
+        </div>
+      </button>
+    </div>
+  </form>
+
+  <p class="text-tagline-4 font-normal text-white/60">
+    {meta.privacyPrefix}
+    <a href={meta.privacyHref} class="font-medium text-white hover:underline">
+      {meta.privacyLinkText}
+    </a>
+  </p>
+</div>
+
+<script>
+  import { initDynamicFormSections } from '../../../lib/formSection.client';
+
+  function setupSubscribeForm() {
+    if (document.querySelector('[data-dynamic-form]')) {
+      initDynamicFormSections();
+    }
+  }
+
+  setupSubscribeForm();
+  document.addEventListener('astro:page-load', setupSubscribeForm);
+</script>

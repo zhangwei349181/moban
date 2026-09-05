@@ -1,0 +1,115 @@
+---
+import type { PageComponentSlot } from '../../lib/pageComponents';
+import { getTranslationByLocale } from '../../lib/translations';
+import { getSectionComponent } from '../../lib/sectionRegistry';
+import Post from '../sections/post.astro';
+import PostChild from '../sections/postchild.astro';
+import PostList from '../sections/postlist.astro';
+import PageHeader from '../sections/pageheader.astro';
+import ListFilter from '../sections/listfilter.astro';
+import PostSingle from '../sections/postsingle.astro';
+import ProductSingle from '../sections/productsingle.astro';
+import Pricing from '../sections/pricing.astro';
+import DashboardPanel from '../sections/dashboardPanel.astro';
+import { isDashboardPanelSectionCode } from '../../lib/dashboardComponentCode';
+import { isPostSectionCode } from '../../lib/postComponentCode';
+import { isPostChildComponentType, isPostChildSectionCode } from '../../lib/postChildComponentCode';
+import { isPostListSectionCode } from '../../lib/postListComponentCode';
+import { isPageHeaderComponentType, isPageHeaderSectionCode } from '../../lib/pageHeaderComponentCode';
+import { isListFilterSectionCode } from '../../lib/listFilterComponentCode';
+import { isPostSingleComponentType, isPostSingleSectionCode } from '../../lib/postSingleComponentCode';
+import { isProductSingleComponentType, isProductSingleSectionCode } from '../../lib/productSingleComponentCode';
+import { isPricingSectionCode } from '../../lib/pricingComponentCode';
+
+interface Props {
+  pageSlot: PageComponentSlot;
+  locale: string;
+  pageCode: string;
+  pageHeaderSeoFallback?: {
+    title: string;
+    description: string;
+    keywords: string;
+  };
+  articleId?: string;
+}
+
+const { pageSlot, locale, pageCode, pageHeaderSeoFallback, articleId } = Astro.props;
+const componentName = pageSlot.componentsCode;
+const editComponentLabel = getTranslationByLocale(locale, 'gt6_edit_component');
+const code = pageSlot.normalizedCode;
+const isPageHeader =
+  isPageHeaderComponentType(pageSlot.componentType) || isPageHeaderSectionCode(code);
+const isPostSingle =
+  isPostSingleComponentType(pageSlot.componentType) || isPostSingleSectionCode(code);
+const isProductSingle =
+  isProductSingleComponentType(pageSlot.componentType) || isProductSingleSectionCode(code);
+const isPostChild =
+  isPostChildComponentType(pageSlot.componentType) || isPostChildSectionCode(code);
+const Section =
+  getSectionComponent(code, pageSlot.componentType) ??
+  (isPageHeader
+    ? PageHeader
+    : isListFilterSectionCode(code)
+      ? ListFilter
+      : isPostSingle
+        ? PostSingle
+        : isProductSingle
+          ? ProductSingle
+          : isPricingSectionCode(code)
+            ? Pricing
+            : isPostListSectionCode(code)
+            ? PostList
+            : isPostChildSectionCode(code)
+              ? PostChild
+            : isPostSectionCode(code)
+              ? Post
+              : undefined);
+---
+
+<div
+  class="gt6-page-component-slot"
+  data-gt6-page-code={pageCode}
+  data-gt6-component-name={componentName}
+  data-gt6-component-id={pageSlot.componentId}
+  data-gt6-normalized-code={code}
+>
+  <div class="gt6-page-component-slot__content">
+    {
+      Section ? (
+        isDashboardPanelSectionCode(code) ? (
+          <DashboardPanel metadata={pageSlot.effectiveMetadata} locale={locale} componentsCode={code} />
+        ) : isPageHeader ? (
+          <PageHeader
+            metadata={pageSlot.effectiveMetadata}
+            locale={locale}
+            seoFallback={pageHeaderSeoFallback}
+          />
+        ) : isPostSingle ? (
+          <PostSingle metadata={pageSlot.effectiveMetadata} locale={locale} articleId={articleId} />
+        ) : isProductSingle ? (
+          <ProductSingle metadata={pageSlot.effectiveMetadata} locale={locale} articleId={articleId} />
+        ) : isPostChild ? (
+          <PostChild metadata={pageSlot.effectiveMetadata} locale={locale} articleId={articleId} />
+        ) : (
+          <Section metadata={pageSlot.effectiveMetadata} locale={locale} />
+        )
+      ) : (
+        import.meta.env.DEV && (
+          <div
+            class="main-container py-4 text-tagline-3 text-secondary/80"
+            data-unknown-page-component={pageSlot.componentsCode}
+          >
+            未注册的页面组件：<code>{pageSlot.componentsCode}</code>（normalized: <code>{code}</code>，metadata
+            来源：{pageSlot.metadataSource}）
+          </div>
+        )
+      )
+    }
+  </div>
+  <div class="gt6-slot-edit-chrome" aria-hidden="true">
+    <span class="gt6-slot-edit-line" aria-hidden="true"></span>
+    <button type="button" class="gt6-slot-edit-btn" data-gt6-action="edit-component">
+      {editComponentLabel}
+    </button>
+  </div>
+</div>

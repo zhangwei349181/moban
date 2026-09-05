@@ -1,0 +1,105 @@
+/* 空模板全局样式：仅 reset + token。不引入 Tailwind / Bootstrap，不定义组件 class。 */
+/* 断点合同（写死在组件 CSS 的 @media 中，不要用 var()）：640 / 768 / 1024 / 1280 */
+
+:root {
+  --color-bg: #ffffff;
+  --color-surface: #f5f5f5;
+  --color-text: #111111;
+  --color-text-muted: #666666;
+  --color-border: #e5e5e5;
+  --color-brand: #111111;
+  --color-brand-ink: #ffffff;
+
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-heading: var(--font-sans);
+  --fs-body: 1rem;
+  --fs-h1: 2rem;
+  --fs-h2: 1.5rem;
+  --lh-body: 1.6;
+
+  --page-max: 1200px;
+  --content-max: 960px;
+  --head-max: 740px;
+  --list-max: 960px;
+  --page-pad: 1.25rem;
+  --section-y: 4rem;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2.5rem;
+
+  --radius: 0.5rem;
+  --radius-pill: 999px;
+  --line: 1px;
+
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --t-fast: 180ms;
+
+  --btn-bg: var(--color-brand);
+  --btn-fg: var(--color-brand-ink);
+  --btn-pad: 0.75rem 1.25rem;
+  --btn-radius: var(--radius-pill);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+html {
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+img,
+svg,
+video {
+  max-width: 100%;
+  display: block;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p {
+  margin: 0;
+  font-size: inherit;
+  font-weight: inherit;
+}

@@ -1,0 +1,92 @@
+---
+/**
+ * PostChild 区块：当前文章的下级列表。
+ * 组件记录 type=postchild 时渲染（code 可用 postchild / postchild01–99）。
+ * 数据来自父级主 JSON 的 has_children / child_article_ids，再按 metadata 过滤。
+ * 展示模板与 post 相同（{{POST_*}} / data-post-tab）。
+ */
+import {
+  resolvePostChildSectionMeta,
+  resolvePostChildSectionGroups,
+  resolvePostChildParentArticleId,
+  loadPostChildSectionTemplate,
+  resolvePostChildClientInit,
+} from './resolvers/postchild';
+import { missingTemplateNoticeHtml, resolveHeader } from './resolvers/_shared';
+import { loadPostChildSectionGroups } from '../../lib/postChildSection';
+import { getTenantId } from '../../lib/i18n';
+import { getTranslationByLocale } from '../../lib/translations';
+import { renderPostSectionHtml } from '../../lib/postTemplate';
+
+interface Props {
+  metadata: Record<string, unknown>;
+  locale: string;
+  articleId?: string;
+}
+
+const { metadata, locale, articleId: articleIdProp } = Astro.props;
+const tenantId = getTenantId(Astro);
+const parentArticleId = resolvePostChildParentArticleId(
+  metadata,
+  articleIdProp || Astro.params.id
+);
+const d = resolvePostChildSectionMeta(metadata, locale);
+const groups = resolvePostChildSectionGroups(metadata, locale);
+const clientInit = resolvePostChildClientInit(metadata, locale);
+const cssUrl = clientInit.cssUrl;
+
+let html = '';
+let visible = false;
+try {
+  const loaded = await loadPostChildSectionGroups(locale, tenantId, parentArticleId, groups);
+  visible = loaded.visible;
+  if (visible) {
+    const templateShell = await loadPostChildSectionTemplate(metadata, locale, Astro.url);
+    if (!templateShell) {
+      html = missingTemplateNoticeHtml(locale);
+    } else {
+      const header = resolveHeader(metadata, locale, { title: d.title, subtitle: '' });
+      html = renderPostSectionHtml({
+        locale,
+        meta: d,
+        subtitle: header.subtitle,
+        groups: loaded.groups,
+        templateShell,
+        labels: {
+          emptyMessage: getTranslationByLocale(locale, 'no_articles_found'),
+          sectionBadge: getTranslationByLocale(locale, 'new_blog_section_title'),
+          readMoreLabel: getTranslationByLocale(locale, 'read_more'),
+        },
+      });
+    }
+  }
+} catch (error) {
+  console.error('[postchild.astro] render failed:', error);
+}
+---
+
+{visible && (
+  <div
+    class="post-section-slot post-section-slot--bare postchild-section-slot"
+    data-post-section
+    data-post-slot
+    data-postchild-section
+    data-use-platform-ui={clientInit.usePlatformUi ? '1' : '0'}
+    data-has-custom-init={clientInit.initScriptUrl || clientInit.initScriptInline ? '1' : '0'}
+    set:html={html}
+  />
+)}
+{visible && cssUrl && <link rel="stylesheet" href={cssUrl} />}
+{visible && clientInit.initScriptUrl && (
+  <script src={clientInit.initScriptUrl} data-post-custom-init="url" />
+)}
+{visible && clientInit.initScriptInline && (
+  <script is:inline data-post-custom-init="inline">
+    {clientInit.initScriptInline}
+  </script>
+)}
+
+<script>
+  import { ensurePostBoot } from '../../lib/postBoot.client';
+  ensurePostBoot();
+</script>

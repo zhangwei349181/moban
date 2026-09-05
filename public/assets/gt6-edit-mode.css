@@ -1,0 +1,230 @@
+/* 可视化编辑态：仅 html.gt6-edit-mode 时显示组件底栏 */
+
+.gt6-page-component-slot {
+  position: relative;
+}
+
+html.gt6-edit-mode [data-chrome-part][data-chrome-nested="1"] {
+  position: relative;
+}
+
+html.gt6-edit-mode [data-chrome-part][data-chrome-nested="1"] > .gt6-chrome-nested-edit-chrome {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  z-index: 30;
+  margin-top: 2px;
+}
+
+.gt6-slot-edit-chrome {
+  display: none;
+  align-items: center;
+  width: 100%;
+  padding: 4px 0 12px;
+  box-sizing: border-box;
+}
+
+html.gt6-edit-mode .gt6-slot-edit-chrome {
+  display: flex;
+}
+
+.gt6-slot-edit-line {
+  flex: 1 1 auto;
+  height: 2px;
+  min-width: 12px;
+  background: #22c55e;
+  border-radius: 1px;
+}
+
+.gt6-slot-edit-btn {
+  flex: 0 0 auto;
+  margin-left: 10px;
+  padding: 4px 12px;
+  font-size: 12px;
+  line-height: 1.35;
+  font-weight: 600;
+  color: #fff;
+  background: #16a34a;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+.gt6-slot-edit-btn:hover {
+  background: #15803d;
+}
+
+.gt6-slot-edit-btn:focus-visible {
+  outline: 2px solid #22c55e;
+  outline-offset: 2px;
+}
+
+html.gt6-edit-mode .gt6-page-component-slot:hover {
+  outline: 1px dashed rgba(34, 197, 94, 0.45);
+  outline-offset: 2px;
+}
+
+html.gt6-edit-mode [data-chrome-part][data-chrome-nested="1"]:hover {
+  outline: 1px dashed rgba(34, 197, 94, 0.45);
+  outline-offset: 2px;
+}
+
+/* 页面 metadata.content HTML 区块底栏（黄线 + 编辑页面） */
+
+.gt6-page-markdown-block {
+  position: relative;
+}
+
+.gt6-page-edit-chrome {
+  display: none;
+  align-items: center;
+  width: 100%;
+  padding: 8px 16px 14px;
+  box-sizing: border-box;
+}
+
+html.gt6-edit-mode .gt6-page-edit-chrome {
+  display: flex;
+}
+
+.gt6-page-edit-line {
+  flex: 1 1 auto;
+  height: 2px;
+  min-width: 12px;
+  background: #eab308;
+  border-radius: 1px;
+}
+
+.gt6-page-edit-btn {
+  flex: 0 0 auto;
+  margin-left: 10px;
+  padding: 4px 12px;
+  font-size: 12px;
+  line-height: 1.35;
+  font-weight: 600;
+  color: #422006;
+  background: #facc15;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.gt6-page-edit-btn:hover {
+  background: #eab308;
+}
+
+.gt6-page-edit-btn:focus-visible {
+  outline: 2px solid #ca8a04;
+  outline-offset: 2px;
+}
+
+html.gt6-edit-mode .gt6-page-markdown-block:hover .page-markdown-content__body,
+html.gt6-edit-mode .gt6-page-markdown-block:hover .page-markdown-content--bare {
+  outline: 1px dashed rgba(234, 179, 8, 0.55);
+  outline-offset: 2px;
+}
+
+/* 全站页面底部：红线 + 编辑页面 / 新增页面 / 新增组件 */
+
+.gt6-layout-footer-chrome {
+  display: none;
+  align-items: center;
+  width: 100%;
+  padding: 12px 16px 20px;
+  box-sizing: border-box;
+  background: transparent;
+}
+
+html.gt6-edit-mode .gt6-layout-footer-chrome {
+  display: flex;
+}
+
+.gt6-layout-footer-line {
+  flex: 1 1 auto;
+  height: 2px;
+  min-width: 12px;
+  background: #ef4444;
+  border-radius: 1px;
+}
+
+.gt6-layout-footer-actions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-left: 10px;
+}
+
+.gt6-layout-footer-btn {
+  padding: 4px 12px;
+  font-size: 12px;
+  line-height: 1.35;
+  font-weight: 600;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+.gt6-layout-footer-btn--edit-page {
+  color: #422006;
+  background: #facc15;
+}
+
+.gt6-layout-footer-btn--edit-page:hover {
+  background: #eab308;
+}
+
+.gt6-layout-footer-btn--edit-page:focus-visible {
+  outline: 2px solid #ca8a04;
+  outline-offset: 2px;
+}
+
+.gt6-layout-footer-btn--edit-layout {
+  color: #fff;
+  background: #7c3aed;
+}
+
+.gt6-layout-footer-btn--edit-layout:hover {
+  background: #6d28d9;
+}
+
+.gt6-layout-footer-btn--edit-layout:focus-visible {
+  outline: 2px solid #8b5cf6;
+  outline-offset: 2px;
+}
+
+.gt6-layout-footer-btn--add-page {
+  color: #fff;
+  background: #2563eb;
+}
+
+.gt6-layout-footer-btn--add-page:hover {
+  background: #1d4ed8;
+}
+
+.gt6-layout-footer-btn--add-page:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+.gt6-layout-footer-btn--add-component {
+  color: #fff;
+  background: #dc2626;
+}
+
+.gt6-layout-footer-btn--add-component:hover {
+  background: #b91c1c;
+}
+
+.gt6-layout-footer-btn--add-component:focus-visible {
+  outline: 2px solid #ef4444;
+  outline-offset: 2px;
+}

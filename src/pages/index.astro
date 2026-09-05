@@ -1,0 +1,51 @@
+﻿---
+/**
+ * 必须按需 SSR：Dispatch 父 Worker 在运行时才会注入 `X-GT6-Tenant-Id`。
+ * 若预渲染为静态 HTML，Cloudflare 适配器会直接走 ASSETS，不执行 middleware，
+ * 构建期也没有该请求头，会导致租户回退与 Layout 中的误报警告。
+ */
+export const prerender = false;
+
+import Layout from '../layouts/Layout.astro';
+import PageComponents from '../components/page/PageComponents.astro';
+import { loadCmsPageViewModel } from '../lib/cmsPage';
+import { getSystemPageSeoDefaults } from '../lib/pageMetadata';
+import { getCurrentLocale, getTenantId } from '../lib/i18n';
+import { filterPageBodySlots } from '../lib/pageBodySlots';
+import { isPageFooterChromeSlot, isPageHeaderChromeSlot } from '../lib/pageChromeSlots';
+
+
+/** 首页对应 CDN：web_pages/home.json */
+const HOME_PAGE_CODE = 'home';
+
+const locale = getCurrentLocale(Astro);
+const tenantId = getTenantId(Astro);
+
+const { pageComponents, seo, frame } = await loadCmsPageViewModel(
+  HOME_PAGE_CODE,
+  locale,
+  tenantId,
+  getSystemPageSeoDefaults(locale, 'home'),
+  Astro.url,
+  { mainClassFallback: '' }
+);
+
+const headerSlots = pageComponents.filter(isPageHeaderChromeSlot);
+const bodySlots = filterPageBodySlots(
+  pageComponents.filter((s) => !isPageHeaderChromeSlot(s) && !isPageFooterChromeSlot(s))
+);
+const footerSlots = pageComponents.filter(isPageFooterChromeSlot);
+---
+
+<Layout title={seo.title} description={seo.description} keywords={seo.keywords} pageCode={HOME_PAGE_CODE} frame={frame}>
+  {headerSlots.length > 0 && (
+    <PageComponents slots={headerSlots} locale={locale} pageCode={HOME_PAGE_CODE} />
+  )}
+  <main class={frame.mainClass}>
+    <PageComponents slots={bodySlots} locale={locale} pageCode={HOME_PAGE_CODE} />
+  </main>
+  {footerSlots.length > 0 && (
+    <PageComponents slots={footerSlots} locale={locale} pageCode={HOME_PAGE_CODE} />
+  )}
+
+</Layout>
